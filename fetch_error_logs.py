@@ -1,8 +1,9 @@
 import os
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from analyze_error import diagnose_log
+from github_code_fetcher import fetch_file_contents
 
 load_dotenv()
 
@@ -16,17 +17,17 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# Use timezone-aware datetime for future compatibility
-now = datetime.utcnow()
+# Use timezone-aware datetime
+now = datetime.now(timezone.utc)
 range_minutes = int(os.getenv("DATADOG_LOG_RANGE_MINUTES", "10"))
-start_time = (now - timedelta(minutes=range_minutes)).isoformat() + "Z"
+start_time = (now - timedelta(minutes=range_minutes)).isoformat()
 
 query = 'status:error service:patchwork-on-rails'
 
 payload = {
     "time": {
         "from": start_time,
-        "to": now.isoformat() + "Z"
+        "to": now.isoformat()
     },
     "query": query,
     "limit": 10
@@ -34,11 +35,7 @@ payload = {
 
 url = f"{DATADOG_SITE}/api/v1/logs-queries/list"
 
-response = requests.post(
-    url,
-    headers=headers,
-    json=payload,
-)
+response = requests.post(url, headers=headers, json=payload)
 
 if response.status_code != 200:
     print("❌ Failed to fetch logs:", response.status_code, response.text)
@@ -61,14 +58,19 @@ for log in logs:
     print("Timestamp:", content.get("timestamp"))
     print("Message:", msg)
 
-    print("\n💡 Diagnosis:")
+    # Hardcoded test file for now
+    file_path = "app/workers/external_application.rb"
+    code = fetch_file_contents(file_path)
+
+    print("🧠 Thinking...", end="", flush=True)
     try:
-        diagnosis = diagnose_log(msg)
+        diagnosis = diagnose_log(msg, code_context=code)
+        print("\r💡 Diagnosis:")
         if diagnosis.strip():
             print(diagnosis.strip())
         else:
             print("⚠️ No diagnosis returned.")
     except Exception as e:
-        print("❌ Analysis failed:", e)
+        print("\n❌ Analysis failed:", e)
 
     print()

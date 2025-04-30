@@ -3,7 +3,7 @@ import requests
 OLLAMA_HOST = "http://localhost:11434"
 MODEL_NAME = "mistral"
 
-def diagnose_log(message: str) -> str:
+def diagnose_log(message: str, code_context: str = None) -> str:
     lines = message.splitlines()
 
     filtered = [
@@ -17,18 +17,21 @@ def diagnose_log(message: str) -> str:
     trimmed_message = "\n".join(filtered)
 
     prompt = f"""
-Rails error log:
+You are a senior Ruby on Rails developer.
 
+Rails error log:
 {trimmed_message}
 
-What caused it and how can a developer fix it?
-"""
+{f"Relevant code:\n{code_context}" if code_context else ""}
+
+What caused this error, and how should a developer fix it?
+""".strip()
 
     response = requests.post(
         f"{OLLAMA_HOST}/api/generate",
         json={
             "model": MODEL_NAME,
-            "prompt": prompt.strip(),
+            "prompt": prompt,
             "stream": False,
             "options": {
                 "temperature": 0.2,
