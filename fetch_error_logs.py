@@ -2,6 +2,7 @@ import os
 import requests
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from analyze_error import diagnose_log
 
 load_dotenv()
 
@@ -15,9 +16,10 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# Use timezone-aware datetime
+# Use timezone-aware datetime for future compatibility
 now = datetime.utcnow()
-start_time = (now - timedelta(minutes=10)).isoformat() + "Z"
+range_minutes = int(os.getenv("DATADOG_LOG_RANGE_MINUTES", "10"))
+start_time = (now - timedelta(minutes=range_minutes)).isoformat() + "Z"
 
 query = 'status:error service:patchwork-on-rails'
 
@@ -45,9 +47,28 @@ if response.status_code != 200:
 logs = response.json().get("logs", [])
 print(f"✅ Fetched {len(logs)} error logs.\n")
 
+seen_messages = set()
+
 for log in logs:
     content = log.get("content", {})
+    msg = content.get("message")
+
+    if not msg or msg in seen_messages:
+        continue
+    seen_messages.add(msg)
+
     print("--- Error Log ---")
     print("Timestamp:", content.get("timestamp"))
-    print("Message:", content.get("message"))
+    print("Message:", msg)
+
+    print("\n💡 Diagnosis:")
+    try:
+        diagnosis = diagnose_log(msg)
+        if diagnosis.strip():
+            print(diagnosis.strip())
+        else:
+            print("⚠️ No diagnosis returned.")
+    except Exception as e:
+        print("❌ Analysis failed:", e)
+
     print()
