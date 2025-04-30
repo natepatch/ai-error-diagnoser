@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from analyze_error import diagnose_log
 from github_code_fetcher import fetch_file_contents
+from utils.error_fingerprint import generate_error_id
+from pr_manager import has_existing_pr
 
 load_dotenv()
 
@@ -72,5 +74,15 @@ for log in logs:
             print("⚠️ No diagnosis returned.")
     except Exception as e:
         print("\n❌ Analysis failed:", e)
+        continue
+
+    # 🧠 Generate a unique error ID and check for existing PRs
+    error_id = generate_error_id(msg)
+
+    if has_existing_pr(error_id):
+        print(f"⚠️ Skipping — a fix already exists for error ID [{error_id}]")
+    else:
+        print(f"🆕 No existing fix found — error ID: {error_id}")
+        # Optionally: create_pr(error_id, msg, diagnosis)
 
     print()
