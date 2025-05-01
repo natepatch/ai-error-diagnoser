@@ -3,7 +3,8 @@ import requests
 import json
 import hashlib
 from dotenv import load_dotenv
-from analyze_error import diagnose_log  # ✅ Make sure this exists
+from analyze_error import diagnose_log
+from github_code_fetcher import fetch_code_context
 
 load_dotenv()
 
@@ -64,7 +65,7 @@ for span in spans:
     custom = attr.get("custom", {})
     error_info = custom.get("error", {})
 
-    print("🧩 Span Error Summary:")
+    print("🎩 Span Error Summary:")
     print(f"Trace ID: {trace_id}")
     print(f"Span ID: {span_id}")
     print(f"Resource: {resource}")
@@ -75,7 +76,20 @@ for span in spans:
 
         message = error_info.get("message", "")
         stack = error_info.get("stack", "")
-        code_context = None  # Optional GitHub lookup
+        code_context = None
+
+        filepath = error_info.get("file")
+        if filepath and stack:
+            for line in stack.splitlines():
+                if filepath in line:
+                    # Try to extract the line number from the stack trace line
+                    import re
+                    match = re.search(r"{}:(\d+)".format(re.escape(filepath)), line)
+                    if match:
+                        line_number = int(match.group(1))
+                        code_context = fetch_code_context(filepath, line_number)
+                        break
+
         print("\n🧠 Analyzing error with AI...")
         try:
             diagnosis = diagnose_log(message, stack_trace=stack, code_context=code_context)

@@ -1,28 +1,22 @@
-import os
 from github import Github
+import os
 
-# Load GitHub access token and repo name from environment variables
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-REPO_NAME = "patchworkhealth/PatchworkOnRails"  # ✅ Use correct org/repo name (case-sensitive)
+def fetch_code_context(filepath: str, line_number: int, context_lines: int = 10) -> str:
+    token = os.getenv("GITHUB_TOKEN")
+    repo = Github(token).get_repo("patchworkhealth/PatchworkOnRails")
 
-# Initialize GitHub client
-g = Github(GITHUB_TOKEN)
-repo = g.get_repo(REPO_NAME)
+    # Clean up the file path (e.g., remove `/app/` if needed)
+    if filepath.startswith("/app/"):
+        filepath = filepath[5:]
 
-def fetch_file_contents(path: str, ref: str = "main") -> str:
-    """
-    Fetches the contents of a file in the GitHub repo.
-
-    Args:
-        path (str): Path to the file in the repo (e.g. "app/models/user.rb")
-        ref (str): Branch or commit SHA (default is "main")
-
-    Returns:
-        str: The file content as a string (UTF-8 decoded)
-    """
     try:
-        contents = repo.get_contents(path, ref=ref)
-        return contents.decoded_content.decode()
+        contents = repo.get_contents(filepath)
+        lines = contents.decoded_content.decode().splitlines()
+
+        start = max(0, line_number - context_lines - 1)
+        end = min(len(lines), line_number + context_lines)
+
+        snippet = lines[start:end]
+        return "\n".join(f"{i+1:4d}: {line}" for i, line in enumerate(snippet, start=start))
     except Exception as e:
-        print(f"❌ Failed to fetch {path}: {e}")
-        return ""
+        return f"⚠️ Failed to fetch context for {filepath}:{line_number} — {e}"
