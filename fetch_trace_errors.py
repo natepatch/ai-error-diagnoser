@@ -5,6 +5,7 @@ import hashlib
 from dotenv import load_dotenv
 from analyze_error import diagnose_log
 from github_code_fetcher import fetch_code_context
+from pr_manager import has_existing_pr, create_pull_request
 
 load_dotenv()
 
@@ -74,27 +75,49 @@ for span in spans:
         error_id = generate_error_id(error_info)
         print(f"Issue Fingerprint: {error_id}")
 
+        if has_existing_pr(error_id):
+            print(f"⚠️ Skipping — PR already exists for fingerprint: {error_id}")
+            continue
+
         message = error_info.get("message", "")
         stack = error_info.get("stack", "")
         code_context = None
 
         filepath = error_info.get("file")
+        line_number = None
+
+        # Extract line number from stack trace
         if filepath and stack:
+            import re
             for line in stack.splitlines():
                 if filepath in line:
-                    # Try to extract the line number from the stack trace line
-                    import re
                     match = re.search(r"{}:(\d+)".format(re.escape(filepath)), line)
                     if match:
                         line_number = int(match.group(1))
                         code_context = fetch_code_context(filepath, line_number)
                         break
 
+        # Normalize filepath to repo-relative
+        if filepath:
+            filepath = filepath.lstrip("/")  # Remove leading slash
+            while filepath.startswith("app/app/"):
+                filepath = filepath.replace("app/", "", 1)
+
         print("\n🧠 Analyzing error with AI...")
         try:
             diagnosis = diagnose_log(message, stack_trace=stack, code_context=code_context)
             print("\n💡 AI Diagnosis:")
             print(diagnosis)
+
+            if filepath and line_number:
+                try:
+                    print(f"📂 File path to be used in PR: {filepath}")
+                    create_pull_request(filepath, line_number, diagnosis, error_id)
+                    print(f"✅ Pull request created for error ID: {error_id}")
+                except Exception as e:
+                    print(f"❌ Failed to create PR: {e}")
+            else:
+                print(f"⚠️ Cannot create PR — missing filepath or line number")
         except Exception as e:
             print(f"❌ AI analysis failed: {e}")
     else:
