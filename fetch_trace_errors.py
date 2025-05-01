@@ -2,6 +2,7 @@ import os
 import requests
 import json
 import hashlib
+import re
 from dotenv import load_dotenv
 from analyze_error import diagnose_log
 from github_code_fetcher import fetch_code_context
@@ -24,7 +25,7 @@ payload = {
         "type": "search_request",
         "attributes": {
             "filter": {
-                "from": "now-15m",
+                "from": "now-24h",
                 "to": "now",
                 "query": "env:prod status:error service:patchwork-on-rails"
             },
@@ -49,6 +50,18 @@ if response.status_code != 200:
 
 spans = response.json().get("data", [])
 print(f"✅ Fetched {len(spans)} span(s).\n")
+
+VALID_PATH_PREFIXES = ["app/", "lib/", "config/", "db/"]
+INVALID_PATH_PARTS = ["/gems/", "/usr/", "/ruby/", "/vendor/", "<", "(eval)"]
+
+def is_valid_code_path(path: str) -> bool:
+    if not path:
+        return False
+    normalized = path.lstrip("/")
+    return (
+            any(normalized.startswith(prefix) for prefix in VALID_PATH_PREFIXES)
+            and not any(bad in normalized for bad in INVALID_PATH_PARTS)
+    )
 
 def generate_error_id(error_info: dict) -> str:
     components = [
@@ -83,12 +96,15 @@ for span in spans:
         stack = error_info.get("stack", "")
         code_context = None
 
-        filepath = error_info.get("file")
+        raw_filepath = error_info.get("file", "")
+        filepath = raw_filepath.lstrip("/")
+        while filepath.startswith("app/app/"):
+            filepath = filepath.replace("app/", "", 1)
+
         line_number = None
 
-        # Extract line number from stack trace
-        if filepath and stack:
-            import re
+        # Extract line from stack trace
+        if is_valid_code_path(filepath) and stack:
             for line in stack.splitlines():
                 if filepath in line:
                     match = re.search(r"{}:(\d+)".format(re.escape(filepath)), line)
@@ -96,30 +112,26 @@ for span in spans:
                         line_number = int(match.group(1))
                         code_context = fetch_code_context(filepath, line_number)
                         break
-
-        # Normalize filepath to repo-relative
-        if filepath:
-            filepath = filepath.lstrip("/")  # Remove leading slash
-            while filepath.startswith("app/app/"):
-                filepath = filepath.replace("app/", "", 1)
+        else:
+            print(f"⚠️ Skipping — file path not in allowed directories: {raw_filepath}")
+            continue
 
         print("\n🧠 Analyzing error with AI...")
-        try:
-            diagnosis = diagnose_log(message, stack_trace=stack, code_context=code_context)
-            print("\n💡 AI Diagnosis:")
-            print(diagnosis)
+        ruby_code = diagnose_log(message, stack_trace=stack, code_context=code_context)
 
-            if filepath and line_number:
-                try:
-                    print(f"📂 File path to be used in PR: {filepath}")
-                    create_pull_request(filepath, line_number, diagnosis, error_id)
-                    print(f"✅ Pull request created for error ID: {error_id}")
-                except Exception as e:
-                    print(f"❌ Failed to create PR: {e}")
-            else:
-                print(f"⚠️ Cannot create PR — missing filepath or line number")
+        if not ruby_code:
+            print("⚠️ Skipping PR — no valid Ruby code returned.")
+            continue
+
+        print("🧪 Extracted replacement code:\n")
+        print(ruby_code)
+
+        try:
+            print(f"📂 File path to be used in PR: {filepath}")
+            create_pull_request(filepath, line_number, ruby_code, error_id)
+            print(f"✅ Pull request created for error ID: {error_id}")
         except Exception as e:
-            print(f"❌ AI analysis failed: {e}")
+            print(f"❌ Failed to create PR: {e}")
     else:
         print("\n⚠️ No error info in `custom.error`")
 

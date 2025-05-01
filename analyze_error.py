@@ -1,8 +1,16 @@
+import os
 import requests
 import time
+import re
+from openai import OpenAI
 
-OLLAMA_HOST = "http://localhost:11434"
-MODEL_NAME = "mistral"
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+MODEL_BACKEND = os.getenv("MODEL_BACKEND", "mistral")  # or "gpt-4"
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4-1106-preview")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+client = OpenAI(api_key=OPENAI_API_KEY)
+
 
 def diagnose_log(message: str, stack_trace: str = None, code_context: str = None) -> str:
     def trim(text: str, max_lines: int = 20) -> str:
@@ -12,52 +20,150 @@ def diagnose_log(message: str, stack_trace: str = None, code_context: str = None
             if "Error" in line or "Exception" in line or "undefined method" in line or "uninitialized constant" in line
         ]
         result = filtered if filtered else lines[:max_lines]
-        if len(result) > max_lines:
-            result = result[:max_lines]
-        return "\n".join(result)
+        return "\n".join(result[:max_lines])
+
+    def ask_model(prompt_text: str) -> str:
+        if MODEL_BACKEND == "gpt-4":
+            response = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a senior Ruby on Rails developer."},
+                    {"role": "user", "content": prompt_text}
+                ],
+                temperature=0.2,
+                max_tokens=1024
+            )
+            return response.choices[0].message.content.strip()
+        else:
+            response = requests.post(
+                f"{OLLAMA_HOST}/api/generate",
+                json={
+                    "model": "mistral",
+                    "prompt": prompt_text,
+                    "stream": False,
+                    "options": {"temperature": 0.2, "num_predict": 1024},
+                },
+            )
+            if response.status_code != 200:
+                raise RuntimeError(f"Ollama returned {response.status_code}: {response.text}")
+            return response.json()["response"].strip()
+
+    def extract_ruby_code_block(response: str) -> str:
+        # Strip line numbers like "35:"
+        stripped_lines = []
+        for line in response.splitlines():
+            match = re.match(r"^\s*\d+:\s*(.*)", line)
+            stripped_lines.append(match.group(1) if match else line)
+        stripped_response = "\n".join(stripped_lines)
+
+        match = re.search(r"```ruby\s+(.*?)\s+```", stripped_response, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        match = re.search(r"```(.*?)```", stripped_response, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        match = re.search(r"(^\s*def\s+\w+.*?^end\s*$)", stripped_response, re.DOTALL | re.MULTILINE)
+        if match:
+            return match.group(1).strip()
+        return ""
+
+    def extract_failing_line(stack: str) -> str:
+        match = re.search(r"\n(/.*?):(\d+):in `(.*?)'", stack)
+        if match:
+            path, line_number, method = match.groups()
+            return f"{path}:{line_number} in `{method}`"
+        return ""
 
     trimmed_message = trim(message, 10)
     trimmed_stack = trim(stack_trace or "", 20)
+    failing_line = extract_failing_line(trimmed_stack)
 
     if code_context and len(code_context) > 3000:
         code_context = code_context[:3000] + "\n... (code context truncated)"
+
+    extra_hint = ""
+    if "undefined method" in trimmed_message and "for nil" in trimmed_message:
+        extra_hint = (
+            f"This line is failing:\n{failing_line}\n"
+            f"With error: `{trimmed_message}`\n\n"
+            "This usually means you're calling a method on `nil`.\n"
+            "You likely need to use Ruby's safe navigation operator `&.` to guard against nil.\n"
+        )
 
     prompt = f"""
 You are a very experienced Ruby on Rails developer.
 
 An error has occurred in a production system. Here are the details:
 
-🚨 Error Message:
+Error Message:
 {trimmed_message}
 
-📚 Stack Trace:
+Stack Trace:
 {trimmed_stack if trimmed_stack else "Not available."}
 
-{f"🧩 Code Context:\n{code_context}" if code_context else ""}
+{f"Code Context:\n{code_context}" if code_context else ""}
 
-👉 What caused this error, and how should a developer fix it? Be specific.
+{extra_hint}
+
+What caused this error, and how should a developer fix it? Be specific.
+
+Return only the corrected Ruby code, clean and complete — no explanation.
 """.strip()
 
     start = time.time()
-    response = requests.post(
-        f"{OLLAMA_HOST}/api/generate",
-        json={
-            "model": MODEL_NAME,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.2,
-                "num_predict": 512
-            }
-        }
-    )
+    initial_fix = ask_model(prompt)
     elapsed = time.time() - start
+    approx_tokens = len(prompt.split())
 
-    if response.status_code != 200:
-        raise RuntimeError(f"Ollama returned {response.status_code}: {response.text}")
-
-    approx_tokens = len(prompt.split())  # crude approximation
     print(f"🧮 Estimated token count: ~{approx_tokens} tokens")
-
     print(f"⏱️ AI responded in {elapsed:.2f} seconds.\n")
-    return response.json()["response"].strip()
+
+    review_prompt = f"""
+You are reviewing a Ruby code fix for a GraphQL Ruby on Rails project.
+
+Below is the proposed fix (a partial diff):
+
+--- BEGIN FIX ---
+{initial_fix}
+--- END FIX ---
+
+You are reviewing a Ruby method that was generated to fix a GraphQL Ruby on Rails error.
+
+Your task is to critically evaluate this method and ensure it is the best, safest, and most idiomatic solution.
+
+Review the code using this checklist:
+
+1. Does the file declare any `field :xyz` GraphQL fields?
+   - If so, is there a corresponding `def xyz` method or `resolver: XYZResolver`?
+   - If neither exists, the behavior may be broken — correct this.
+2. Does the method preserve original behavior, including:
+   - Authentication
+   - Data type casting (e.g., `.becomes(Account)`)
+   - Return semantics
+3. Does the fix remove any logic or controller methods?
+   - If so, ensure they are unused and not required elsewhere.
+4. Is the Ruby code safe, idiomatic, and consistent with Rails best practices?
+5. Is it formatted and linted according to RuboCop rules?
+
+🧠 Re-evaluate the proposed fix. If a better or safer alternative exists, return that instead.
+
+✅ Return a single valid Ruby method.
+✅ No explanation, no markdown, no line numbers.
+
+Once the output has been provided, run Rubocop against it and return the results.
+
+""".strip()
+
+    reviewed_response = ask_model(review_prompt)
+    print("🧠 Raw AI output:\n")
+    print(reviewed_response)
+
+    ruby_code = extract_ruby_code_block(reviewed_response)
+
+    if not ruby_code:
+        print("⚠️ No Ruby code extracted from AI output. Skipping PR.")
+    else:
+        print("🧪 Extracted replacement code:\n")
+        print(ruby_code)
+
+    return ruby_code
