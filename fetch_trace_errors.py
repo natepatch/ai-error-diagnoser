@@ -1,7 +1,7 @@
 import os
 import requests
 import json
-from datetime import datetime, timedelta, timezone
+import hashlib
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,7 +9,6 @@ load_dotenv()
 DATADOG_API_KEY = os.getenv("DATADOG_API_KEY")
 DATADOG_APP_KEY = os.getenv("DATADOG_APP_KEY")
 DATADOG_SITE = os.getenv("DATADOG_SITE", "https://api.datadoghq.eu")
-range_minutes = int(os.getenv("DATADOG_LOG_RANGE_MINUTES", "10"))
 
 headers = {
     "DD-API-KEY": DATADOG_API_KEY,
@@ -17,23 +16,22 @@ headers = {
     "Content-Type": "application/json"
 }
 
-now = datetime.now(timezone.utc)
-start_time = (now - timedelta(minutes=range_minutes)).isoformat()
-
-# ✅ Wrap payload in `data` to conform to Datadog Spans API
 payload = {
     "data": {
         "type": "search_request",
         "attributes": {
             "filter": {
-                "from": start_time,
-                "to": now.isoformat(),
-                "query": "service:patchwork-on-rails status:error"
+                "from": "now-15m",
+                "to": "now",
+                "query": "env:prod status:error service:patchwork-on-rails"
+            },
+            "options": {
+                "timezone": "GMT"
             },
             "page": {
                 "limit": 1
             },
-            "sort": "-timestamp"
+            "sort": "timestamp"
         }
     }
 }
@@ -46,32 +44,40 @@ if response.status_code != 200:
     print("❌ Failed to fetch spans:", response.status_code, response.text)
     exit(1)
 
-logs = response.json().get("data", [])
-print(f"✅ Fetched {len(logs)} span(s).\n")
+spans = response.json().get("data", [])
+print(f"✅ Fetched {len(spans)} span(s).\n")
 
-for log in logs:
-    attr = log.get("attributes", {})
-    tags = attr.get("tags", [])
+def generate_error_id(error_info: dict) -> str:
+    components = [
+        error_info.get("message", ""),
+        error_info.get("file", ""),
+        error_info.get("stack", "")
+    ]
+    return hashlib.md5("::".join(components).encode()).hexdigest()
+
+for span in spans:
+    attr = span.get("attributes", {})
     trace_id = attr.get("trace_id")
     span_id = attr.get("span_id")
-    service = attr.get("service")
     resource = attr.get("resource_name")
-    start = attr.get("start_timestamp")
-    end = attr.get("end_timestamp")
-    span_type = attr.get("type")
+    custom = attr.get("custom", {})
+    error_info = custom.get("error", {})
 
-    print("🧩 Span")
-    print(f"Service: {service}")
-    print(f"Resource: {resource}")
+    print("🧩 Span Error Summary:")
     print(f"Trace ID: {trace_id}")
     print(f"Span ID: {span_id}")
-    print(f"Start: {start}")
-    print(f"End: {end}")
-    print(f"Type: {span_type}")
-    print(f"Tags: {tags}")
+    print(f"Resource: {resource}")
 
-    # 🕵️ Show raw for inspection
-    print("\n🔍 Raw Attributes:")
-    print(json.dumps(attr, indent=2))
+    if error_info:
+        error_id = generate_error_id(error_info)
+        print(f"Issue Fingerprint: {error_id}")
 
-    break  # Only show the first one for now
+        print("\n💥 Error Message:")
+        print(error_info.get("message", "—"))
+
+        print("\n📚 Stack Trace:")
+        print(error_info.get("stack", "—"))
+    else:
+        print("\n⚠️ No error info in `custom.error`")
+
+    print("-" * 60)
