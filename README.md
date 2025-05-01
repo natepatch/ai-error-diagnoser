@@ -1,6 +1,6 @@
 # 🧠 AI Error Diagnoser for Rails Monolith
 
-This project fetches recent production errors from Datadog logs, diagnoses their root cause using a local AI model (via [Ollama](https://ollama.com)), and (optionally) inspects related source code from GitHub to suggest fixes.
+This project fetches recent production errors from Datadog Spans, diagnoses their root cause using a local AI model (via [Ollama](https://ollama.com)), and (optionally) inspects related source code from GitHub to suggest fixes.
 
 ---
 
