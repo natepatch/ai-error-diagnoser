@@ -75,8 +75,7 @@ for span in spans:
 
         message = error_info.get("message", "")
         stack = error_info.get("stack", "")
-        code_context = None  # You can later fetch this with GitHub if needed
-
+        code_context = None  # Optional GitHub lookup
         print("\n🧠 Analyzing error with AI...")
         try:
             diagnosis = diagnose_log(message, stack_trace=stack, code_context=code_context)

@@ -5,24 +5,20 @@ OLLAMA_HOST = "http://localhost:11434"
 MODEL_NAME = "mistral"
 
 def diagnose_log(message: str, stack_trace: str = None, code_context: str = None) -> str:
-    def trim(text):
+    def trim(text: str, max_lines: int = 20) -> str:
         lines = text.splitlines()
         filtered = [
             line for line in lines
             if "Error" in line or "Exception" in line or "undefined method" in line or "uninitialized constant" in line
         ]
-        return "\n".join(filtered if filtered else lines[:15])
+        result = filtered if filtered else lines[:max_lines]
+        if len(result) > max_lines:
+            result = result[:max_lines]
+        return "\n".join(result)
 
-    # Trim the error message
-    trimmed_message = trim(message)
+    trimmed_message = trim(message, 10)
+    trimmed_stack = trim(stack_trace or "", 20)
 
-    # Trim and truncate the stack trace
-    trimmed_stack = trim(stack_trace or "")
-    stack_lines = trimmed_stack.splitlines()
-    if len(stack_lines) > 20:
-        trimmed_stack = "\n".join(stack_lines[:20]) + "\n... (stack trace truncated)"
-
-    # Optionally trim code context if it’s too large
     if code_context and len(code_context) > 3000:
         code_context = code_context[:3000] + "\n... (code context truncated)"
 
@@ -43,7 +39,6 @@ An error has occurred in a production system. Here are the details:
 """.strip()
 
     start = time.time()
-
     response = requests.post(
         f"{OLLAMA_HOST}/api/generate",
         json={
@@ -56,12 +51,13 @@ An error has occurred in a production system. Here are the details:
             }
         }
     )
-
-    duration = time.time() - start
+    elapsed = time.time() - start
 
     if response.status_code != 200:
         raise RuntimeError(f"Ollama returned {response.status_code}: {response.text}")
 
-    result = response.json()["response"].strip()
+    approx_tokens = len(prompt.split())  # crude approximation
+    print(f"🧮 Estimated token count: ~{approx_tokens} tokens")
 
-    return f"{result}\n\n⏱️ AI response generated in {duration:.2f} seconds."
+    print(f"⏱️ AI responded in {elapsed:.2f} seconds.\n")
+    return response.json()["response"].strip()
