@@ -11,7 +11,6 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-
 def diagnose_log(message: str, stack_trace: str = None, code_context: str = None) -> str:
     def trim(text: str, max_lines: int = 20) -> str:
         lines = text.splitlines()
@@ -49,7 +48,6 @@ def diagnose_log(message: str, stack_trace: str = None, code_context: str = None
             return response.json()["response"].strip()
 
     def extract_ruby_code_block(response: str) -> str:
-        # Strip line numbers like "35:"
         stripped_lines = []
         for line in response.splitlines():
             match = re.match(r"^\s*\d+:\s*(.*)", line)
@@ -105,9 +103,21 @@ Stack Trace:
 
 {extra_hint}
 
-What caused this error, and how should a developer fix it? Be specific.
+What caused this error, and how should a developer fix it? Be specific. Consider what impact this change has on the system.
 
-Return only the corrected Ruby code, clean and complete — no explanation.
+Use best practices for Ruby and Rails development:
+- Use safe navigation (`&.`) to avoid nil errors
+- Prefer guard clauses to nested conditionals
+- Use meaningful, descriptive method and variable names
+- Keep methods short and single-purpose
+- Avoid global state
+- Prefer composition over inheritance
+- Use `find_by` when querying optional associations
+- Use `raise` to fail fast on invalid input
+- Respect GraphQL `field` declarations and resolvers
+- Format as if run through `rubocop --safe --lint --only Layout,Style,Lint`
+
+Return only the corrected Ruby code — no explanation.
 """.strip()
 
     start = time.time()
@@ -127,31 +137,25 @@ Below is the proposed fix (a partial diff):
 {initial_fix}
 --- END FIX ---
 
-You are reviewing a Ruby method that was generated to fix a GraphQL Ruby on Rails error.
+Your job is to verify and correct this Ruby method.
 
-Your task is to critically evaluate this method and ensure it is the best, safest, and most idiomatic solution.
+Checklist:
+1. Does the method correspond to a GraphQL `field` declaration or provide a resolver?
+2. Does it preserve original behavior, including type casting, authentication, and return values?
+3. Has unnecessary logic been removed? If so, ensure it is not used elsewhere.
+4. Is the code idiomatic and valid Ruby that passes `rubocop --safe --lint`?
+5. Does it follow common Ruby best practices:
+   - safe navigation (`&.`)
+   - guard clauses
+   - short, clear methods
+   - descriptive naming
+   - object composition
+   - fail-fast logic
 
-Review the code using this checklist:
-
-1. Does the file declare any `field :xyz` GraphQL fields?
-   - If so, is there a corresponding `def xyz` method or `resolver: XYZResolver`?
-   - If neither exists, the behavior may be broken — correct this.
-2. Does the method preserve original behavior, including:
-   - Authentication
-   - Data type casting (e.g., `.becomes(Account)`)
-   - Return semantics
-3. Does the fix remove any logic or controller methods?
-   - If so, ensure they are unused and not required elsewhere.
-4. Is the Ruby code safe, idiomatic, and consistent with Rails best practices?
-5. Is it formatted and linted according to RuboCop rules?
-
-🧠 Re-evaluate the proposed fix. If a better or safer alternative exists, return that instead.
-
-✅ Return a single valid Ruby method.
-✅ No explanation, no markdown, no line numbers.
-
-Once the output has been provided, run Rubocop against it and return the results.
-
+✅ Return only the corrected Ruby method
+❌ No explanation
+❌ No markdown or fences
+❌ Do not ignore RuboCop or you'll break the build
 """.strip()
 
     reviewed_response = ask_model(review_prompt)
