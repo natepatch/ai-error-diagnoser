@@ -3,6 +3,7 @@ import requests
 import json
 import hashlib
 from dotenv import load_dotenv
+from analyze_error import diagnose_log  # ✅ Make sure this exists
 
 load_dotenv()
 
@@ -72,11 +73,17 @@ for span in spans:
         error_id = generate_error_id(error_info)
         print(f"Issue Fingerprint: {error_id}")
 
-        print("\n💥 Error Message:")
-        print(error_info.get("message", "—"))
+        message = error_info.get("message", "")
+        stack = error_info.get("stack", "")
+        code_context = None  # You can later fetch this with GitHub if needed
 
-        print("\n📚 Stack Trace:")
-        print(error_info.get("stack", "—"))
+        print("\n🧠 Analyzing error with AI...")
+        try:
+            diagnosis = diagnose_log(message, stack_trace=stack, code_context=code_context)
+            print("\n💡 AI Diagnosis:")
+            print(diagnosis)
+        except Exception as e:
+            print(f"❌ AI analysis failed: {e}")
     else:
         print("\n⚠️ No error info in `custom.error`")
 
