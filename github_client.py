@@ -23,7 +23,7 @@ def get_existing_pr(repo, fingerprint: str):
             return pr
     return None
 
-def submit_pr_to_github(repo, filepath: str, branch_name: str, file_content: str, error_id: str, pr_body: str):
+def submit_pr_to_github(repo, filepath: str, branch_name: str, file_content: str, error_id: str, pr_body):
     contents = repo.get_contents(filepath)
     base_branch = repo.get_branch("main")
     ref = f"refs/heads/{branch_name}"
@@ -42,9 +42,17 @@ def submit_pr_to_github(repo, filepath: str, branch_name: str, file_content: str
         branch=branch_name,
     )
 
+    # 🛠️ Safely handle pr_body before passing to .strip()
+    if isinstance(pr_body, dict):
+        pr_body = json.dumps(pr_body, indent=2)
+    elif isinstance(pr_body, str):
+        pr_body = pr_body.strip()
+    else:
+        pr_body = str(pr_body).strip()
+
     repo.create_pull(
         title=f"[AI Fix] Patch for {error_id}",
-        body=f"This PR includes an AI-generated fix for `{filepath}`.\n\n{pr_body.strip()}",
+        body=f"This PR includes an AI-generated fix for `{filepath}`.\n\n{pr_body}",
         head=branch_name,
         base="main",
     )

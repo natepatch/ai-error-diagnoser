@@ -18,4 +18,6 @@ If it is valid, return it as-is. If not, fix it. No explanation, only corrected 
         return [line for line in corrected.splitlines() if line.strip()]
     except Exception as e:
         print(f"⚠️ Failed to validate Ruby method with AI: {e}")
+        print("🧠 Prompt sent to GPT-4:\n")
+        print(prompt)
         return method_code_lines

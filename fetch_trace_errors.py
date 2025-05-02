@@ -3,6 +3,7 @@ import requests
 import json
 import hashlib
 import re
+import traceback
 from dotenv import load_dotenv
 from analyze_error import diagnose_log
 from github_code_fetcher import fetch_code_context
@@ -126,8 +127,8 @@ for span in spans:
         print("\n🧠 Analyzing error with AI...")
         ruby_code = diagnose_log(message, stack_trace=stack, code_context=code_context)
 
-        if not ruby_code:
-            print("⚠️ Skipping PR — no valid Ruby code returned.")
+        if not isinstance(ruby_code, str):
+            print(f"⚠️ Skipping PR — diagnose_log returned a {type(ruby_code)}, expected string.")
             continue
 
         print("🧪 Extracted replacement code:\n")
@@ -139,6 +140,7 @@ for span in spans:
             print(f"✅ Pull request created for error ID: {error_id}")
         except Exception as e:
             print(f"❌ Failed to create PR: {e}")
+            traceback.print_exc()
     else:
         print("\n⚠️ No error info in `custom.error`")
 

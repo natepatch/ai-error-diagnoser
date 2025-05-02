@@ -1,6 +1,7 @@
 import os
 import json
 import subprocess
+import re
 from github_client import get_repo, get_existing_pr, submit_pr_to_github
 from ruby_linter import validate_with_rubocop, autocorrect_with_rubocop
 from ruby_parser import extract_ruby_code, find_method_bounds, reindent_ruby_method
@@ -31,6 +32,7 @@ def create_pull_request(filepath: str, line_number: int, diagnosis: str, error_i
 
     raw_ruby_code = "\n".join(replacement_code_lines)
     corrected_code = autocorrect_with_rubocop(raw_ruby_code)
+    corrected_code = re.sub(r"\n\s*else\s*(?:#.*)?\s*\n\s*end", "\nend", corrected_code)
     print("🧼 RuboCop auto-corrected Ruby code:")
     print(corrected_code)
 
@@ -41,19 +43,19 @@ def create_pull_request(filepath: str, line_number: int, diagnosis: str, error_i
         return
 
     corrected_lines = corrected_code.splitlines()
+    method_name_match = re.search(r"def\s+(\w+)", corrected_code)
+    method_name = method_name_match.group(1) if method_name_match else "unknown_method"
+
     if not corrected_lines[0].strip().startswith("def "):
-        corrected_lines.insert(0, "def current_account")
+        corrected_lines.insert(0, f"def {method_name}")
         print("⚠️ AI output was missing method declaration — added manually.")
     if corrected_lines[-1].strip() != "end":
         corrected_lines.append("end")
 
-    validated_code = validate_and_correct_ruby_code(corrected_lines, "current_account")
-    final_code = reindent_ruby_method(validated_code)
+    final_ruby_code = validate_and_correct_ruby_code(corrected_lines, method_name)
+    final_code = reindent_ruby_method(final_ruby_code)
 
     final_code_str = "\n".join(final_code)
-    import re
-    method_name_match = re.search(r"def\s+(\w+)", final_code_str)
-    method_name = method_name_match.group(1) if method_name_match else "unknown_method"
 
     try:
         start, end = find_method_bounds(lines, method_name)
@@ -104,4 +106,20 @@ def create_pull_request(filepath: str, line_number: int, diagnosis: str, error_i
         final_file_content = f.read()
 
     branch_name = f"ai/fix-{error_id[:8]}"
-    submit_pr_to_github(repo, filepath, branch_name, final_file_content, error_id, diagnosis)
+
+    explanation = "This fix was generated automatically to resolve a production error."
+    pr_body = f"""
+### 🤖 AI Explanation
+
+{explanation}
+
+---
+
+### ✅ Final Suggested Fix
+
+```ruby
+{final_code_str}
+```
+""".strip()
+
+    submit_pr_to_github(repo, filepath, branch_name, final_file_content, error_id, pr_body)
