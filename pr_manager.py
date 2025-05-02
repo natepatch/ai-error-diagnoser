@@ -4,12 +4,11 @@ import re
 import subprocess
 import tempfile
 from analyze_error import diagnose_log
-from dotenv import load_dotenv  # ✅ Add this
+from dotenv import load_dotenv
 
-load_dotenv()  # ✅ Load .env values automatically
+load_dotenv()
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 REPO_NAME = "patchworkhealth/PatchworkOnRails"
-
 
 def validate_with_rubocop(ruby_code: str) -> tuple[bool, str]:
     with tempfile.NamedTemporaryFile(mode="w+", suffix=".rb", delete=False) as tmp_file:
@@ -22,10 +21,9 @@ def validate_with_rubocop(ruby_code: str) -> tuple[bool, str]:
             [
                 "rubocop",
                 "--force-exclusion",
-                "--format",
-                "simple",
-                "--only",
-                "Layout,Style,Lint",
+                "--format", "simple",
+                "--only", "Layout,Style,Lint",
+                "--except", "Style/Documentation",
                 tmp_path,
             ],
             capture_output=True,
@@ -43,6 +41,54 @@ def validate_with_rubocop(ruby_code: str) -> tuple[bool, str]:
         os.remove(tmp_path)
 
 
+def autocorrect_with_rubocop(ruby_code: str) -> str:
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".rb", delete=False) as tmp_file:
+        tmp_file.write(ruby_code)
+        tmp_file.flush()
+        tmp_path = tmp_file.name
+
+    try:
+        subprocess.run(
+            [
+                "rubocop",
+                "-A",
+                "--only", "Layout,Style,Lint",
+                "--except", "Style/Documentation",
+                tmp_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        with open(tmp_path, "r") as f:
+            corrected_code = f.read()
+        return corrected_code
+    except Exception as e:
+        print(f"❌ RuboCop autocorrect failed: {e}")
+        return ruby_code
+    finally:
+        os.remove(tmp_path)
+
+
+def reindent_ruby_method(lines: list[str], indent: int = 2) -> list[str]:
+    """
+    Reindents the method body consistently using the given indent level.
+    Assumes the first line is the method definition and the last is `end`.
+    """
+    if len(lines) < 2:
+        return lines
+
+    indented = [lines[0]]  # method signature stays unindented
+    body = lines[1:-1]
+    end = lines[-1]
+
+    indented_body = [(" " * indent) + line.strip() for line in body]
+    indented.append("\n".join(indented_body))
+    indented.append(end)
+
+    return indented
+
+
 def has_existing_pr(error_id: str) -> bool:
     gh = Github(GITHUB_TOKEN)
     repo = gh.get_repo(REPO_NAME)
@@ -54,55 +100,12 @@ def has_existing_pr(error_id: str) -> bool:
             return True
     return False
 
-
 def extract_ruby_code(diagnosis: str) -> list[str]:
     code = diagnosis.strip()
     if "```" in code:
         parts = code.split("```")
         code = next((p for p in parts if "ruby" not in p.lower()), parts[-1])
-
-    lines = code.splitlines()
-    valid_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if not re.search(r"[a-zA-Z0-9_\[\]\(\)\.:=]", stripped):
-            continue
-        if line.startswith("  ") or stripped.startswith(
-            ("def ", "end", "return", "if ", "unless ", "context", "Account", "User")
-        ):
-            valid_lines.append(line)
-    return valid_lines
-
-
-def validate_and_correct_ruby_code(
-    method_code_lines: list[str], method_name: str
-) -> list[str]:
-    ruby_code = "\n".join(method_code_lines)
-    prompt = f"""
-You are a Ruby expert. Review the following Ruby method called `{method_name}`.
-If it is valid, return it as-is. If not, fix it. No explanation, only corrected Ruby code.
-
-{ruby_code}
-
-css
-Copy
-Edit
-"""
-    try:
-        ai_response = diagnose_log(prompt)
-        corrected = ai_response.strip()
-        if "```" in corrected:
-            parts = corrected.split("```")
-            corrected = next((p for p in parts if "ruby" not in p.lower()), parts[-1])
-        corrected_lines = [line for line in corrected.splitlines() if line.strip()]
-        print("🥪 AI-corrected Ruby method:\n" + "\n".join(corrected_lines))
-        return corrected_lines
-    except Exception as e:
-        print(f"⚠️ Failed to validate Ruby method with AI: {e}")
-        return method_code_lines
-
+    return [line for line in code.splitlines() if line.strip()]
 
 def find_method_bounds(lines: list[str], method_name: str) -> tuple[int, int]:
     start = None
@@ -121,59 +124,92 @@ def find_method_bounds(lines: list[str], method_name: str) -> tuple[int, int]:
                     return start, i
     raise ValueError(f"Method '{method_name}' not found or unbalanced in file.")
 
+def validate_and_correct_ruby_code(method_code_lines: list[str], method_name: str) -> list[str]:
+    ruby_code = "\n".join(method_code_lines)
+    prompt = f"""
+You are a Ruby expert. Review the following Ruby method called `{method_name}`.
+If it is valid, return it as-is. If not, fix it. No explanation, only corrected Ruby code.
 
-def create_pull_request(
-    filepath: str, line_number: int, diagnosis: str, error_id: str
-) -> None:
+{ruby_code}
+""".strip()
+
+    try:
+        ai_response = diagnose_log(prompt)
+        corrected = ai_response.strip()
+        if "```" in corrected:
+            parts = corrected.split("```")
+            corrected = next((p for p in parts if "ruby" not in p.lower()), parts[-1])
+        corrected_lines = [line for line in corrected.splitlines() if line.strip()]
+        print("🥪 AI-corrected Ruby method:\n" + "\n".join(corrected_lines))
+        return corrected_lines
+    except Exception as e:
+        print(f"⚠️ Failed to validate Ruby method with AI: {e}")
+        return method_code_lines
+
+
+
+def create_pull_request(filepath: str, line_number: int, diagnosis: str, error_id: str) -> None:
     gh = Github(GITHUB_TOKEN)
     repo = gh.get_repo(REPO_NAME)
     contents = repo.get_contents(filepath)
     lines = contents.decoded_content.decode().splitlines()
 
-    replacement_code = extract_ruby_code(diagnosis)
+    replacement_code_lines = extract_ruby_code(diagnosis)
     print("🧪 Extracted replacement code:")
-    print("\n".join(replacement_code))
+    print("\n".join(replacement_code_lines))
 
-    if not replacement_code:
+    if not replacement_code_lines:
         print(f"⚠️ No Ruby code extracted from AI output. Diagnosis was:\n{diagnosis}")
         return
 
-    corrected_code = autocorrect_with_rubocop(ruby_code_str)
+    raw_ruby_code = "\n".join(replacement_code_lines)
+
+    corrected_code = autocorrect_with_rubocop(raw_ruby_code)
     print("🧼 RuboCop auto-corrected Ruby code:")
     print(corrected_code)
 
-    # Then continue with validation or PR creation
-    replacement_code = corrected_code.splitlines()
+    is_valid, lint_output = validate_with_rubocop(corrected_code)
+    if not is_valid:
+        print(f"❌ RuboCop validation failed even after auto-correct:\n{lint_output}")
+        print("❌ Skipping PR — unsafe or unformatted Ruby code.")
+        return
 
-    method_name_match = next(
-        (
-            re.search(r"def\s+(\w+)", line)
-            for line in replacement_code
-            if "def " in line
-        ),
-        None,
-    )
+    corrected_lines = corrected_code.splitlines()
+
+    method_name_match = re.search(r"def\s+(\w+)", corrected_code)
     method_name = method_name_match.group(1) if method_name_match else "current_account"
 
-    if not replacement_code[0].strip().startswith("def "):
-        replacement_code.insert(0, f"def {method_name}")
+    if not corrected_lines[0].strip().startswith("def "):
+        corrected_lines.insert(0, f"def {method_name}")
         print("⚠️ AI output was missing method declaration — added manually.")
+    if corrected_lines[-1].strip() != "end":
+        corrected_lines.append("end")
 
-    while replacement_code and replacement_code[-1].strip() == "end":
-        replacement_code.pop()
-    replacement_code.append("end")
-
-    replacement_code = validate_and_correct_ruby_code(replacement_code, method_name)
+    validated_code = validate_and_correct_ruby_code(corrected_lines, method_name)
+    final_code = reindent_ruby_method(validated_code)
 
     try:
         start, end = find_method_bounds(lines, method_name)
         print(f"🔧 Replacing method `{method_name}`: lines {start+1} to {end+1}")
-        lines = lines[:start] + replacement_code + lines[end + 1 :]
+        lines = lines[:start] + final_code + lines[end + 1:]
     except ValueError as e:
         print(f"❌ Could not replace method: {e}")
         return
 
     updated_content = "\n".join(lines)
+
+    # ✅ Write updated content to the actual file
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, "w") as f:
+        f.write(updated_content)
+
+    # ✅ Validate full file with RuboCop
+    is_valid, lint_output = validate_with_rubocop(updated_content)
+    if not is_valid:
+        print(f"❌ Final RuboCop validation failed for {filepath}:\n{lint_output}")
+        print("❌ Skipping PR — final code not linted properly.")
+        return
+
     branch_name = f"ai/fix-{error_id[:8]}"
     base_branch = repo.get_branch("main")
     repo.create_git_ref(ref=f"refs/heads/{branch_name}", sha=base_branch.commit.sha)
@@ -188,7 +224,7 @@ def create_pull_request(
 
     repo.create_pull(
         title=f"[AI Fix] Patch for {error_id}",
-        body=f"This PR includes an automated method replacement:\n\n```ruby\n{ruby_code_str}\n```",
+        body=f"This PR includes an automated method replacement:\n\n```ruby\n{corrected_code}\n```",
         head=branch_name,
         base="main",
     )

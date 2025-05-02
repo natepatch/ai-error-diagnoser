@@ -55,3 +55,7 @@ def autocorrect_with_rubocop(ruby_code: str) -> str:
         return ruby_code
     finally:
         os.remove(tmp_path)
+        print("🔍 Code after RuboCop autocorrect:")
+        print(corrected_code)
+        print("📏 Re-validating after autocorrect...")
+        print(validate_with_rubocop(corrected_code))
