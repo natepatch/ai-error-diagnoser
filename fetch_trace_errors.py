@@ -6,13 +6,21 @@ import re
 from dotenv import load_dotenv
 from analyze_error import diagnose_log
 from github_code_fetcher import fetch_code_context
-from pr_manager import has_existing_pr, create_pull_request
+from github_client import get_repo, get_existing_pr, submit_pr_to_github
+from pr_manager import create_pull_request
 
 load_dotenv()
 
 DATADOG_API_KEY = os.getenv("DATADOG_API_KEY")
 DATADOG_APP_KEY = os.getenv("DATADOG_APP_KEY")
 DATADOG_SITE = os.getenv("DATADOG_SITE", "https://api.datadoghq.eu")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+REPO_NAME = "patchworkhealth/PatchworkOnRails"
+
+if not DATADOG_API_KEY or not DATADOG_APP_KEY or not GITHUB_TOKEN:
+    raise RuntimeError("❌ Missing required environment variables.")
+
+repo = get_repo(GITHUB_TOKEN, REPO_NAME)
 
 headers = {
     "DD-API-KEY": DATADOG_API_KEY,
@@ -41,7 +49,6 @@ payload = {
 }
 
 url = f"{DATADOG_SITE}/api/v2/spans/events/search"
-
 response = requests.post(url, headers=headers, json=payload)
 
 if response.status_code != 200:
@@ -59,8 +66,8 @@ def is_valid_code_path(path: str) -> bool:
         return False
     normalized = path.lstrip("/")
     return (
-            any(normalized.startswith(prefix) for prefix in VALID_PATH_PREFIXES)
-            and not any(bad in normalized for bad in INVALID_PATH_PARTS)
+            any(normalized.startswith(prefix) for prefix in VALID_PATH_PREFIXES) and
+            not any(bad in normalized for bad in INVALID_PATH_PARTS)
     )
 
 def generate_error_id(error_info: dict) -> str:
@@ -88,8 +95,9 @@ for span in spans:
         error_id = generate_error_id(error_info)
         print(f"Issue Fingerprint: {error_id}")
 
-        if has_existing_pr(error_id):
-            print(f"⚠️ Skipping — PR already exists for fingerprint: {error_id}")
+        existing_pr = get_existing_pr(repo, error_id)
+        if existing_pr:
+            print(f"⚠️ Skipping — PR already exists: {existing_pr.html_url}")
             continue
 
         message = error_info.get("message", "")
@@ -103,11 +111,10 @@ for span in spans:
 
         line_number = None
 
-        # Extract line from stack trace
         if is_valid_code_path(filepath) and stack:
             for line in stack.splitlines():
                 if filepath in line:
-                    match = re.search(r"{}:(\d+)".format(re.escape(filepath)), line)
+                    match = re.search(r"{}:(\\d+)".format(re.escape(filepath)), line)
                     if match:
                         line_number = int(match.group(1))
                         code_context = fetch_code_context(filepath, line_number)
