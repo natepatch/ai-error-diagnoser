@@ -1,17 +1,52 @@
 from github import Github
 import os
 import re
-from analyze_error import diagnose_log  # Using diagnose_log directly
+import subprocess
+import tempfile
+from analyze_error import diagnose_log
+from dotenv import load_dotenv  # ✅ Add this
 
+load_dotenv()  # ✅ Load .env values automatically
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 REPO_NAME = "patchworkhealth/PatchworkOnRails"
+
+
+def validate_with_rubocop(ruby_code: str) -> tuple[bool, str]:
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".rb", delete=False) as tmp_file:
+        tmp_file.write(ruby_code)
+        tmp_file.flush()
+        tmp_path = tmp_file.name
+
+    try:
+        result = subprocess.run(
+            [
+                "rubocop",
+                "--force-exclusion",
+                "--format",
+                "simple",
+                "--only",
+                "Layout,Style,Lint",
+                tmp_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        is_clean = result.returncode == 0
+        output = result.stdout.strip()
+        return is_clean, output
+    except FileNotFoundError:
+        return False, "Rubocop not found. Is it installed and available in your PATH?"
+    except subprocess.TimeoutExpired:
+        return False, "Rubocop validation timed out."
+    finally:
+        os.remove(tmp_path)
 
 
 def has_existing_pr(error_id: str) -> bool:
     gh = Github(GITHUB_TOKEN)
     repo = gh.get_repo(REPO_NAME)
     branch_name = f"ai/fix-{error_id[:8]}"
-
     pulls = repo.get_pulls(state="open")
     for pr in pulls:
         if pr.head.ref == branch_name:
@@ -38,7 +73,6 @@ def extract_ruby_code(diagnosis: str) -> list[str]:
             ("def ", "end", "return", "if ", "unless ", "context", "Account", "User")
         ):
             valid_lines.append(line)
-
     return valid_lines
 
 
@@ -46,18 +80,18 @@ def validate_and_correct_ruby_code(
     method_code_lines: list[str], method_name: str
 ) -> list[str]:
     ruby_code = "\n".join(method_code_lines)
-
     prompt = f"""
 You are a Ruby expert. Review the following Ruby method called `{method_name}`.
 If it is valid, return it as-is. If not, fix it. No explanation, only corrected Ruby code.
 
-```
 {ruby_code}
-```
-"""
 
+css
+Copy
+Edit
+"""
     try:
-        ai_response = diagnose_log(prompt)  # Reusing existing AI call
+        ai_response = diagnose_log(prompt)
         corrected = ai_response.strip()
         if "```" in corrected:
             parts = corrected.split("```")
@@ -104,6 +138,13 @@ def create_pull_request(
         print(f"⚠️ No Ruby code extracted from AI output. Diagnosis was:\n{diagnosis}")
         return
 
+    corrected_code = autocorrect_with_rubocop(ruby_code_str)
+    print("🧼 RuboCop auto-corrected Ruby code:")
+    print(corrected_code)
+
+    # Then continue with validation or PR creation
+    replacement_code = corrected_code.splitlines()
+
     method_name_match = next(
         (
             re.search(r"def\s+(\w+)", line)
@@ -147,7 +188,7 @@ def create_pull_request(
 
     repo.create_pull(
         title=f"[AI Fix] Patch for {error_id}",
-        body=f"This PR includes an automated method replacement:\n\n```ruby\n{'\n'.join(replacement_code)}\n```",
+        body=f"This PR includes an automated method replacement:\n\n```ruby\n{ruby_code_str}\n```",
         head=branch_name,
         base="main",
     )

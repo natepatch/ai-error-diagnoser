@@ -27,13 +27,13 @@ payload = {
             "filter": {
                 "from": "now-24h",
                 "to": "now",
-                "query": "env:prod status:error service:patchwork-on-rails"
+                "query": "env:prod status:error service:patchwork-on-rails -operation_name:rack.request"
             },
             "options": {
                 "timezone": "GMT"
             },
             "page": {
-                "limit": 1
+                "limit": 3
             },
             "sort": "timestamp"
         }

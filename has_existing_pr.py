@@ -1,4 +1,5 @@
-from github import Github, GithubException
+from github import Github
+from github.GithubException import UnknownObjectException, GithubException
 import os
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
@@ -9,11 +10,14 @@ def has_existing_pr(fingerprint: str) -> bool:
         raise RuntimeError("❌ GITHUB_TOKEN is missing. Check your .env or environment variables.")
 
     gh = Github(GITHUB_TOKEN)
+    print(f"🔍 Looking for repo: {REPO_NAME}")
 
     try:
         repo = gh.get_repo(REPO_NAME)
+    except UnknownObjectException:
+        raise RuntimeError(f"❌ Repo '{REPO_NAME}' not found. Check if the repo exists and the token has access.")
     except GithubException as e:
-        raise RuntimeError(f"❌ Failed to fetch repo '{REPO_NAME}': {e.data.get('message')}")
+        raise RuntimeError(f"❌ GitHub API error ({e.status}): {e.data.get('message')}")
 
     open_prs = repo.get_pulls(state="open", sort="created", base="main")
 
@@ -22,3 +26,4 @@ def has_existing_pr(fingerprint: str) -> bool:
             return True
 
     return False
+
