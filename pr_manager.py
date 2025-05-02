@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import tempfile
+import json
 from analyze_error import diagnose_log
 from dotenv import load_dotenv
 
@@ -40,7 +41,6 @@ def validate_with_rubocop(ruby_code: str) -> tuple[bool, str]:
     finally:
         os.remove(tmp_path)
 
-
 def autocorrect_with_rubocop(ruby_code: str) -> str:
     with tempfile.NamedTemporaryFile(mode="w+", suffix=".rb", delete=False) as tmp_file:
         tmp_file.write(ruby_code)
@@ -69,25 +69,16 @@ def autocorrect_with_rubocop(ruby_code: str) -> str:
     finally:
         os.remove(tmp_path)
 
-
 def reindent_ruby_method(lines: list[str], indent: int = 2) -> list[str]:
-    """
-    Reindents the method body consistently using the given indent level.
-    Assumes the first line is the method definition and the last is `end`.
-    """
     if len(lines) < 2:
         return lines
-
-    indented = [lines[0]]  # method signature stays unindented
+    indented = [lines[0]]
     body = lines[1:-1]
     end = lines[-1]
-
     indented_body = [(" " * indent) + line.strip() for line in body]
     indented.append("\n".join(indented_body))
     indented.append(end)
-
     return indented
-
 
 def has_existing_pr(error_id: str) -> bool:
     gh = Github(GITHUB_TOKEN)
@@ -146,7 +137,27 @@ If it is valid, return it as-is. If not, fix it. No explanation, only corrected 
         print(f"⚠️ Failed to validate Ruby method with AI: {e}")
         return method_code_lines
 
+def submit_pr_to_github(repo, filepath: str, branch_name: str, file_content: str, error_id: str, corrected_code: str):
+    contents = repo.get_contents(filepath)
+    base_branch = repo.get_branch("main")
+    repo.create_git_ref(ref=f"refs/heads/{branch_name}", sha=base_branch.commit.sha)
 
+    repo.update_file(
+        path=filepath,
+        message=f"AI fix suggestion for {error_id}",
+        content=file_content,
+        sha=contents.sha,
+        branch=branch_name,
+    )
+
+    repo.create_pull(
+        title=f"[AI Fix] Patch for {error_id}",
+        body=f"This PR includes an automated method replacement:\n\n```ruby\n{corrected_code}\n```",
+        head=branch_name,
+        base="main",
+    )
+
+    print(f"✅ Pull request created: {branch_name}")
 
 def create_pull_request(filepath: str, line_number: int, diagnosis: str, error_id: str) -> None:
     gh = Github(GITHUB_TOKEN)
@@ -163,7 +174,6 @@ def create_pull_request(filepath: str, line_number: int, diagnosis: str, error_i
         return
 
     raw_ruby_code = "\n".join(replacement_code_lines)
-
     corrected_code = autocorrect_with_rubocop(raw_ruby_code)
     print("🧼 RuboCop auto-corrected Ruby code:")
     print(corrected_code)
@@ -175,7 +185,6 @@ def create_pull_request(filepath: str, line_number: int, diagnosis: str, error_i
         return
 
     corrected_lines = corrected_code.splitlines()
-
     method_name_match = re.search(r"def\s+(\w+)", corrected_code)
     method_name = method_name_match.group(1) if method_name_match else "current_account"
 
@@ -197,36 +206,43 @@ def create_pull_request(filepath: str, line_number: int, diagnosis: str, error_i
         return
 
     updated_content = "\n".join(lines)
-
-    # ✅ Write updated content to the actual file
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     with open(filepath, "w") as f:
         f.write(updated_content)
 
-    # ✅ Validate full file with RuboCop
-    is_valid, lint_output = validate_with_rubocop(updated_content)
-    if not is_valid:
-        print(f"❌ Final RuboCop validation failed for {filepath}:\n{lint_output}")
-        print("❌ Skipping PR — final code not linted properly.")
-        return
+    try:
+        subprocess.run(["rubocop", "-A", filepath], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"❗ rubocop -A exited with error — continuing to validate:\n{e}")
+
+    ignorable_offenses = {"Style/Documentation"}
+    final_validation = subprocess.run(
+        ["rubocop", filepath, "--format", "json"],
+        capture_output=True,
+        text=True
+    )
+
+    if final_validation.returncode != 0:
+        try:
+            result = json.loads(final_validation.stdout)
+            uncorrectable = [
+                o for f in result["files"] for o in f["offenses"]
+                if o["cop_name"] not in ignorable_offenses
+            ]
+            if uncorrectable:
+                print("❌ RuboCop found uncorrectable offenses:")
+                for o in uncorrectable:
+                    print(f"- {o['cop_name']}: {o['message']}")
+                print("❌ Skipping PR — file still has non-ignorable issues.")
+                return
+            else:
+                print("⚠️ RuboCop returned issues, but only ignorable offenses were present.")
+        except json.JSONDecodeError:
+            print("❌ Failed to parse RuboCop JSON output. Skipping PR.")
+            return
+
+    with open(filepath, "r") as f:
+        final_file_content = f.read()
 
     branch_name = f"ai/fix-{error_id[:8]}"
-    base_branch = repo.get_branch("main")
-    repo.create_git_ref(ref=f"refs/heads/{branch_name}", sha=base_branch.commit.sha)
-
-    repo.update_file(
-        path=filepath,
-        message=f"AI fix suggestion for {error_id}",
-        content=updated_content,
-        sha=contents.sha,
-        branch=branch_name,
-    )
-
-    repo.create_pull(
-        title=f"[AI Fix] Patch for {error_id}",
-        body=f"This PR includes an automated method replacement:\n\n```ruby\n{corrected_code}\n```",
-        head=branch_name,
-        base="main",
-    )
-
-    print(f"✅ Pull request created: ai/fix-{error_id[:8]}")
+    submit_pr_to_github(repo, filepath, branch_name, final_file_content, error_id, corrected_code)
