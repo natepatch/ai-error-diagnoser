@@ -10,8 +10,9 @@ If it is valid, return it as-is. If not, fix it. No explanation, only corrected 
 """.strip()
 
     try:
-        ai_response = diagnose_log(prompt)
-        corrected = ai_response.strip()
+        _, corrected = diagnose_log(prompt)  # ignore explanation
+        corrected = corrected.strip()
+
         if "```" in corrected:
             parts = corrected.split("```")
             corrected = next((p for p in parts if "ruby" not in p.lower()), parts[-1])

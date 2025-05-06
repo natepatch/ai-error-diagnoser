@@ -1,3 +1,4 @@
+
 import os
 import json
 import subprocess
@@ -12,7 +13,7 @@ load_dotenv()
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 REPO_NAME = "patchworkhealth/PatchworkOnRails"
 
-def create_pull_request(filepath: str, line_number: int, diagnosis: str, error_id: str) -> None:
+def create_pull_request(filepath, line_number, diagnosis_text, final_code_str, error_id) -> None:
     repo = get_repo(GITHUB_TOKEN, REPO_NAME)
 
     if get_existing_pr(repo, error_id):
@@ -22,17 +23,7 @@ def create_pull_request(filepath: str, line_number: int, diagnosis: str, error_i
     contents = repo.get_contents(filepath)
     lines = contents.decoded_content.decode().splitlines()
 
-    replacement_code_lines = extract_ruby_code(diagnosis)
-    print("🧪 Extracted replacement code:")
-    print("\n".join(replacement_code_lines))
-
-    if not replacement_code_lines:
-        print(f"⚠️ No Ruby code extracted from AI output. Diagnosis was:\n{diagnosis}")
-        return
-
-    raw_ruby_code = "\n".join(replacement_code_lines)
-    corrected_code = autocorrect_with_rubocop(raw_ruby_code)
-    corrected_code = re.sub(r"\n\s*else\s*(?:#.*)?\s*\n\s*end", "\nend", corrected_code)
+    corrected_code = autocorrect_with_rubocop(final_code_str)
     print("🧼 RuboCop auto-corrected Ruby code:")
     print(corrected_code)
 
@@ -76,13 +67,13 @@ def create_pull_request(filepath: str, line_number: int, diagnosis: str, error_i
     except subprocess.CalledProcessError as e:
         print(f"❗ rubocop -A exited with error — continuing to validate:\n{e}")
 
-    ignorable_offenses = {"Style/Documentation"}
     final_validation = subprocess.run(
         ["rubocop", filepath, "--format", "json"],
         capture_output=True,
         text=True
     )
 
+    ignorable_offenses = {"Style/Documentation"}
     if final_validation.returncode != 0:
         try:
             result = json.loads(final_validation.stdout)
@@ -97,7 +88,7 @@ def create_pull_request(filepath: str, line_number: int, diagnosis: str, error_i
                 print("❌ Skipping PR — file still has non-ignorable issues.")
                 return
             else:
-                print("⚠️ RuboCop returned issues, but only ignorable offenses were present.")
+                print("⚠️ RuboCop returned only ignorable offenses.")
         except json.JSONDecodeError:
             print("❌ Failed to parse RuboCop JSON output. Skipping PR.")
             return
@@ -106,8 +97,8 @@ def create_pull_request(filepath: str, line_number: int, diagnosis: str, error_i
         final_file_content = f.read()
 
     branch_name = f"ai/fix-{error_id[:8]}"
+    explanation = diagnosis_text.split("```ruby")[0].strip()
 
-    explanation = "This fix was generated automatically to resolve a production error."
     pr_body = f"""
 ### 🤖 AI Explanation
 

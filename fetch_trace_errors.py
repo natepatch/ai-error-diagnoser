@@ -1,3 +1,4 @@
+
 import os
 import requests
 import json
@@ -115,7 +116,7 @@ for span in spans:
         if is_valid_code_path(filepath) and stack:
             for line in stack.splitlines():
                 if filepath in line:
-                    match = re.search(r"{}:(\\d+)".format(re.escape(filepath)), line)
+                    match = re.search(r"{}:(\d+)".format(re.escape(filepath)), line)
                     if match:
                         line_number = int(match.group(1))
                         code_context = fetch_code_context(filepath, line_number)
@@ -125,18 +126,18 @@ for span in spans:
             continue
 
         print("\n🧠 Analyzing error with AI...")
-        ruby_code = diagnose_log(message, stack_trace=stack, code_context=code_context)
+        diagnosis_text, final_code_str = diagnose_log(message, stack_trace=stack, code_context=code_context)
 
-        if not isinstance(ruby_code, str):
-            print(f"⚠️ Skipping PR — diagnose_log returned a {type(ruby_code)}, expected string.")
+        if not diagnosis_text or not final_code_str:
+            print("⚠️ Skipping PR — AI failed to return usable explanation or code.")
             continue
 
         print("🧪 Extracted replacement code:\n")
-        print(ruby_code)
+        print(final_code_str)
 
         try:
             print(f"📂 File path to be used in PR: {filepath}")
-            create_pull_request(filepath, line_number, ruby_code, error_id)
+            create_pull_request(filepath, line_number, diagnosis_text, final_code_str, error_id)
             print(f"✅ Pull request created for error ID: {error_id}")
         except Exception as e:
             print(f"❌ Failed to create PR: {e}")
