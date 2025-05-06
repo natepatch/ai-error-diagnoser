@@ -1,17 +1,21 @@
 import os
+from search_similar_code import search_similar_snippets
 
-def build_diagnosis_prompt(message: str, stack: str, code_context: str = None, ruby_version: str = "2.7", rails_version: str = "7.1") -> str:
-    context_hint = os.getenv("PROJECT_CONTEXT_HINT", "")
+CONTEXT_HINT = os.getenv("PROJECT_CONTEXT_HINT", "")
 
-    if code_context and len(code_context) > 3000:
-        code_context = code_context[:3000] + "\n... (code context truncated)"
+def build_diagnosis_prompt(message: str, stack_trace: str = "", code_context: str = "") -> str:
+    similar_snippets = search_similar_snippets(f"{message}\n{stack_trace}", top_k=3)
+    similar_text = "\n\n".join([f"# Related snippet {i+1}:\n{snippet}" for i, snippet in enumerate(similar_snippets)])
+
+    code_section = f"🧩 Code Context:\n{code_context}" if code_context else ""
+    similar_section = f"🔍 Similar Code from Codebase:\n{similar_text}" if similar_snippets else ""
 
     return f"""
 You are a senior Ruby on Rails developer.
 
 Your task is to diagnose and fix the following error. This app uses:
-- Ruby {ruby_version}
-- Rails {rails_version}
+- Ruby {os.getenv("RUBY_VERSION", "2.7")}
+- Rails {os.getenv("RAILS_VERSION", "7.1")}
 - GraphQL (graphql-ruby gem)
 - ActiveRecord with PostgreSQL
 
@@ -22,15 +26,17 @@ Context:
 - When changing method signatures, explain why in your reasoning.
 
 ---
-{context_hint}
+{CONTEXT_HINT}
 
 🧨 Error Message:
 {message}
 
 📉 Stack Trace:
-{stack or "Not available"}
+{stack_trace or "Not available"}
 
-{f"🧩 Code Context:\n{code_context}" if code_context else ""}
+{code_section}
+
+{similar_section}
 
 ---
 
@@ -38,6 +44,6 @@ Context:
 1. Identify what likely caused the error based on the stack trace and context.
 2. Explain briefly what the issue is in production terms.
 3. Propose a fix that is safe, idiomatic, and Rails-appropriate.
-4. You are fixing a full method. Always include both `def` and `end`. Do not remove the method definition.
-5. Then return the corrected Ruby code in triple backticks with `ruby` tag.
+4. Then return the corrected Ruby code in triple backticks with `ruby` tag.
+4. **You are fixing a full method. Always include both `def` and `end`. Do not remove the method definition.**
 """.strip()
