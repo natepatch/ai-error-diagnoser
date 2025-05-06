@@ -18,6 +18,7 @@ DATADOG_APP_KEY = os.getenv("DATADOG_APP_KEY")
 DATADOG_SITE = os.getenv("DATADOG_SITE", "https://api.datadoghq.eu")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 REPO_NAME = "patchworkhealth/PatchworkOnRails"
+TARGET_SPAN_ID = os.getenv("TARGET_SPAN_ID")
 
 if not DATADOG_API_KEY or not DATADOG_APP_KEY or not GITHUB_TOKEN:
     raise RuntimeError("❌ Missing required environment variables.")
@@ -59,6 +60,14 @@ if response.status_code != 200:
 
 spans = response.json().get("data", [])
 print(f"✅ Fetched {len(spans)} span(s).\n")
+
+if TARGET_SPAN_ID:
+    filtered = [s for s in spans if s.get("attributes", {}).get("span_id") == TARGET_SPAN_ID]
+    if filtered:
+        print(f"🔍 Using span with ID: {TARGET_SPAN_ID}")
+        spans = filtered
+    else:
+        print(f"⚠️ No span matched TARGET_SPAN_ID={TARGET_SPAN_ID} — proceeding with all spans.")
 
 VALID_PATH_PREFIXES = ["app/", "lib/", "config/", "db/"]
 INVALID_PATH_PARTS = ["/gems/", "/usr/", "/ruby/", "/vendor/", "<", "(eval)"]

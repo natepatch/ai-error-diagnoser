@@ -13,6 +13,8 @@ MODEL_BACKEND = os.getenv("MODEL_BACKEND", "mistral")  # or "gpt-4"
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4-1106-preview")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+CONTEXT_HINT = os.getenv("PROJECT_CONTEXT_HINT", "")
+
 client = None
 if MODEL_BACKEND == "gpt-4":
     client = OpenAI(api_key=OPENAI_API_KEY)
@@ -82,6 +84,7 @@ def diagnose_log(message: str, stack_trace: str = None, code_context: str = None
         code_context = code_context[:3000] + "\n... (code context truncated)"
 
     initial_prompt = f"""
+    
 You are a senior Ruby on Rails developer.
 
 Your task is to diagnose and fix the following error. This app uses:
@@ -97,6 +100,7 @@ Context:
 - When changing method signatures, explain why in your reasoning.
 
 ---
+{CONTEXT_HINT}
 
 🧨 Error Message:
 {trimmed_message}
