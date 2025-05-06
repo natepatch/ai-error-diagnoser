@@ -5,7 +5,7 @@ import subprocess
 import re
 from github_client import get_repo, get_existing_pr, submit_pr_to_github
 from ruby_linter import validate_with_rubocop, autocorrect_with_rubocop
-from ruby_parser import extract_ruby_code, find_method_bounds, reindent_ruby_method
+from ruby_parser import reindent_ruby_method, find_method_bounds
 from ai_diagnosis import validate_and_correct_ruby_code
 from dotenv import load_dotenv
 
@@ -99,6 +99,7 @@ def create_pull_request(filepath, line_number, diagnosis_text, final_code_str, e
     branch_name = f"ai/fix-{error_id[:8]}"
     explanation = diagnosis_text.split("```ruby")[0].strip()
 
+    # PR body reflects the actual committed code
     pr_body = f"""
 ### 🤖 AI Explanation
 
