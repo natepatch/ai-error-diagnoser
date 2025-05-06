@@ -1,10 +1,10 @@
-
 import os
 import requests
 import time
 import re
 from openai import OpenAI
 from dotenv import load_dotenv
+from prompt_builder import build_diagnosis_prompt
 
 load_dotenv(override=True)
 
@@ -12,8 +12,6 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 MODEL_BACKEND = os.getenv("MODEL_BACKEND", "mistral")  # or "gpt-4"
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4-1106-preview")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-CONTEXT_HINT = os.getenv("PROJECT_CONTEXT_HINT", "")
 
 client = None
 if MODEL_BACKEND == "gpt-4":
@@ -80,44 +78,8 @@ def diagnose_log(message: str, stack_trace: str = None, code_context: str = None
 
     trimmed_message = trim(message, 10)
     trimmed_stack = trim(stack_trace or "", 20)
-    if code_context and len(code_context) > 3000:
-        code_context = code_context[:3000] + "\n... (code context truncated)"
 
-    initial_prompt = f"""
-    
-You are a senior Ruby on Rails developer.
-
-Your task is to diagnose and fix the following error. This app uses:
-- Ruby {os.getenv("RUBY_VERSION", "2.7")}
-- Rails {os.getenv("RAILS_VERSION", "7.1")}
-- GraphQL (graphql-ruby gem)
-- ActiveRecord with PostgreSQL
-
-Context:
-- Assume the app is a standard Ruby on Rails monolith unless stated otherwise.
-- Follow best practices: avoid swallowing errors silently, prefer clear control flow, and handle nils safely.
-- If a `NullObject` pattern is appropriate, use it explicitly.
-- When changing method signatures, explain why in your reasoning.
-
----
-{CONTEXT_HINT}
-
-🧨 Error Message:
-{trimmed_message}
-
-📉 Stack Trace:
-{trimmed_stack or "Not available"}
-
-{f"🧩 Code Context:\n{code_context}" if code_context else ""}
-
----
-
-🎯 Instructions:
-1. Identify what likely caused the error based on the stack trace and context.
-2. Explain briefly what the issue is in production terms.
-3. Propose a fix that is safe, idiomatic, and Rails-appropriate.
-4. Then return the corrected Ruby code in triple backticks with `ruby` tag.
-""".strip()
+    initial_prompt = build_diagnosis_prompt(trimmed_message, trimmed_stack, code_context)
 
     start = time.time()
     initial_response = ask_model(initial_prompt)
