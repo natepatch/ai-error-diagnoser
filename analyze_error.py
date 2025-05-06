@@ -3,13 +3,19 @@ import requests
 import time
 import re
 from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 MODEL_BACKEND = os.getenv("MODEL_BACKEND", "mistral")  # or "gpt-4"
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4-1106-preview")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = None
+if MODEL_BACKEND == "gpt-4":
+    from openai import OpenAI
+    client = OpenAI(api_key=OPENAI_API_KEY)
 
 def extract_ruby_code_block(response: str) -> str:
     stripped_lines = []
@@ -53,6 +59,7 @@ def diagnose_log(
 
     def ask_model(prompt_text: str) -> str:
         if MODEL_BACKEND == "gpt-4":
+            print("🤖 Using GPT-4 via OpenAI API")
             response = client.chat.completions.create(
                 model=OPENAI_MODEL,
                 messages=[
@@ -67,10 +74,11 @@ def diagnose_log(
             )
             return response.choices[0].message.content.strip()
         else:
+            print(f"🤖 Using {MODEL_BACKEND} via Ollama at {OLLAMA_HOST}")
             response = requests.post(
                 f"{OLLAMA_HOST}/api/generate",
                 json={
-                    "model": "mistral",
+                    "model": MODEL_BACKEND,  # dynamic model name
                     "prompt": prompt_text,
                     "stream": False,
                     "options": {"temperature": 0.2, "num_predict": 1024},
@@ -82,6 +90,7 @@ def diagnose_log(
                 )
             return response.json()["response"].strip()
 
+
     trimmed_message = trim(message, 10)
     trimmed_stack = trim(stack_trace or "", 20)
 
@@ -92,7 +101,21 @@ def diagnose_log(
     initial_prompt = f"""
 You are a senior Ruby on Rails developer.
 
-An error occurred in production. Diagnose and fix it.
+Your task is to diagnose and fix the following error. This app uses:
+- Ruby {os.getenv("RUBY_VERSION", "2.7")}
+- Rails {os.getenv("RAILS_VERSION", "7.1")}
+- GraphQL (graphql-ruby gem)
+- ActiveRecord with PostgreSQL
+1. Diagnose the root cause of the error using the message, stack trace, and code context.
+
+
+Context:
+- Assume the app is a standard Ruby on Rails monolith unless stated otherwise.
+- Follow best practices: avoid swallowing errors silently, prefer clear control flow, and handle nils safely.
+- If a `NullObject` pattern is appropriate, use it explicitly.
+- When changing method signatures, explain why in your reasoning.- Avoid `rescue nil` and silent failures.
+- Prefer `safe_navigation (&.)` over nil checks unless it harms clarity.
+- When uncertain about a model method, use ActiveRecord-style access patterns.
 
 ---
 
@@ -107,8 +130,10 @@ An error occurred in production. Diagnose and fix it.
 ---
 
 🎯 Instructions:
-1. Explain what caused the error and how to fix it.
-2. Then return the corrected Ruby code in triple backticks with `ruby` tag.
+1. Identify what likely caused the error based on the stack trace and context.
+2. Explain briefly what the issue is in production terms.
+3. Propose a fix that is safe, idiomatic, and Rails-appropriate.
+4. Then return the corrected Ruby code in triple backticks with `ruby` tag.
 
 Example:
 
@@ -140,6 +165,12 @@ Explanation...
     # 🧪 Optional second-pass refinement
     review_prompt = f"""
 You are reviewing a Ruby code fix for a production GraphQL app.
+
+Fix quality criteria:
+- The code must be idiomatic Ruby.
+- It should handle nils safely and be readable.
+- Avoid rescue blocks that suppress errors silently.
+- Make sure the code integrates with Rails/GraphQL conventions.
 
 --- BEGIN FIX ---
 {ruby_code}
