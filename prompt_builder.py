@@ -1,11 +1,20 @@
 import os
 from search_similar_code import search_similar_snippets
+from dotenv import load_dotenv
+
+load_dotenv()
 
 CONTEXT_HINT = os.getenv("PROJECT_CONTEXT_HINT", "")
+DEBUG_PROMPT_CONTEXT = os.getenv("DEBUG_PROMPT_CONTEXT", "false").lower() == "true"
 
 def build_diagnosis_prompt(message: str, stack_trace: str = "", code_context: str = "") -> str:
     similar_snippets = search_similar_snippets(f"{message}\n{stack_trace}", top_k=3)
     similar_text = "\n\n".join([f"# Related snippet {i+1}:\n{snippet}" for i, snippet in enumerate(similar_snippets)])
+
+    if DEBUG_PROMPT_CONTEXT:
+        print("\n🔍 Debug: Similar snippets passed into prompt:\n")
+        for i, snippet in enumerate(similar_snippets, 1):
+            print(f"\n--- Related snippet {i} ---\n{snippet}\n")
 
     code_section = f"🧩 Code Context:\n{code_context}" if code_context else ""
     similar_section = f"🔍 Similar Code from Codebase:\n{similar_text}" if similar_snippets else ""
