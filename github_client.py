@@ -50,11 +50,14 @@ def submit_pr_to_github(repo, filepath: str, branch_name: str, file_content: str
     else:
         pr_body = str(pr_body).strip()
 
-    repo.create_pull(
+    pr = repo.create_pull(
         title=f"[AI Fix] Patch for {error_id}",
         body=f"This PR includes an AI-generated fix for `{filepath}`.\n\n{pr_body}",
         head=branch_name,
         base="main",
     )
+
+    # ✅ Add a Datadog label
+    pr.add_to_labels("Datadog-error-fix")
 
     print(f"✅ Pull request created: {branch_name}")
