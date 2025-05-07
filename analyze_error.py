@@ -17,6 +17,37 @@ client = None
 if MODEL_BACKEND == "gpt-4":
     client = OpenAI(api_key=OPENAI_API_KEY)
 
+
+# 🔁 Reusable for general-purpose prompting (used by validate_and_correct_ruby_code)
+def ask_model(prompt_text: str) -> str:
+    if MODEL_BACKEND == "gpt-4":
+        print("🤖 Using GPT-4 via OpenAI API")
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a senior Ruby on Rails developer."},
+                {"role": "user", "content": prompt_text},
+            ],
+            temperature=0.2,
+            max_tokens=1024,
+        )
+        return response.choices[0].message.content.strip()
+    else:
+        print(f"🤖 Using {MODEL_BACKEND} via Ollama at {OLLAMA_HOST}")
+        response = requests.post(
+            f"{OLLAMA_HOST}/api/generate",
+            json={
+                "model": MODEL_BACKEND,
+                "prompt": prompt_text,
+                "stream": False,
+                "options": {"temperature": 0.2, "num_predict": 1024},
+            },
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"Ollama returned {response.status_code}: {response.text}")
+        return response.json()["response"].strip()
+
+
 def extract_ruby_code_block(response: str) -> str:
     stripped_lines = []
     for line in response.splitlines():
@@ -38,7 +69,8 @@ def extract_ruby_code_block(response: str) -> str:
 
     return ""
 
-def diagnose_log(message: str, stack_trace: str = None, code_context: str = None):
+
+def diagnose_log(message: str, stack_trace: str = None, code_context: str = None, runtime_info: dict = None):
     def trim(text: str, max_lines: int = 20) -> str:
         lines = text.splitlines()
         filtered = [
@@ -48,38 +80,18 @@ def diagnose_log(message: str, stack_trace: str = None, code_context: str = None
         result = filtered if filtered else lines[:max_lines]
         return "\n".join(result[:max_lines])
 
-    def ask_model(prompt_text: str) -> str:
-        if MODEL_BACKEND == "gpt-4":
-            print("🤖 Using GPT-4 via OpenAI API")
-            response = client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=[
-                    {"role": "system", "content": "You are a senior Ruby on Rails developer."},
-                    {"role": "user", "content": prompt_text},
-                ],
-                temperature=0.2,
-                max_tokens=1024,
-            )
-            return response.choices[0].message.content.strip()
-        else:
-            print(f"🤖 Using {MODEL_BACKEND} via Ollama at {OLLAMA_HOST}")
-            response = requests.post(
-                f"{OLLAMA_HOST}/api/generate",
-                json={
-                    "model": MODEL_BACKEND,
-                    "prompt": prompt_text,
-                    "stream": False,
-                    "options": {"temperature": 0.2, "num_predict": 1024},
-                },
-            )
-            if response.status_code != 200:
-                raise RuntimeError(f"Ollama returned {response.status_code}: {response.text}")
-            return response.json()["response"].strip()
-
     trimmed_message = trim(message, 10)
     trimmed_stack = trim(stack_trace or "", 20)
 
-    initial_prompt = build_diagnosis_prompt(trimmed_message, trimmed_stack, code_context)
+    initial_prompt = build_diagnosis_prompt(
+        trimmed_message,
+        trimmed_stack,
+        code_context,
+        runtime_info=runtime_info
+    )
+
+    print("\n📨 Final prompt sent to AI:\n")
+    print(initial_prompt)
 
     start = time.time()
     initial_response = ask_model(initial_prompt)

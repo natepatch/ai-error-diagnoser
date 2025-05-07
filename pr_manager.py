@@ -1,4 +1,3 @@
-
 import os
 import json
 import subprocess
@@ -6,7 +5,6 @@ import re
 from github_client import get_repo, get_existing_pr, submit_pr_to_github
 from ruby_linter import validate_with_rubocop, autocorrect_with_rubocop
 from ruby_parser import reindent_ruby_method, find_method_bounds
-from ai_diagnosis import validate_and_correct_ruby_code
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -24,28 +22,23 @@ def create_pull_request(filepath, line_number, diagnosis_text, final_code_str, e
     lines = contents.decoded_content.decode().splitlines()
 
     corrected_code = autocorrect_with_rubocop(final_code_str)
-    print("🧼 RuboCop auto-corrected Ruby code:")
-    print(corrected_code)
-
-    is_valid, lint_output = validate_with_rubocop(corrected_code)
-    if not is_valid:
-        print(f"❌ RuboCop validation failed even after auto-correct:\n{lint_output}")
-        print("❌ Skipping PR — unsafe or unformatted Ruby code.")
+    if not corrected_code:
+        print("❌ RuboCop autocorrection failed — skipping PR.")
         return
 
     corrected_lines = corrected_code.splitlines()
     method_name_match = re.search(r"def\s+(\w+)", corrected_code)
     method_name = method_name_match.group(1) if method_name_match else "unknown_method"
 
-    if not corrected_lines[0].strip().startswith("def "):
-        corrected_lines.insert(0, f"def {method_name}")
-        print("⚠️ AI output was missing method declaration — added manually.")
-    if corrected_lines[-1].strip() != "end":
-        corrected_lines.append("end")
 
-    final_ruby_code = validate_and_correct_ruby_code(corrected_lines, method_name)
-    final_code = reindent_ruby_method(final_ruby_code)
+    is_valid, lint_output = validate_with_rubocop(corrected_code)
 
+    if not is_valid:
+        print(f"❌ RuboCop validation failed even after auto-correct:\n{lint_output}")
+        print("❌ Skipping PR — unsafe or unformatted Ruby code.")
+        return
+
+    final_code = reindent_ruby_method(corrected_lines)
     final_code_str = "\n".join(final_code)
 
     try:
@@ -54,7 +47,7 @@ def create_pull_request(filepath, line_number, diagnosis_text, final_code_str, e
         lines = lines[:start] + final_code + lines[end + 1:]
     except ValueError:
         print(f"⚠️ Method '{method_name}' not found — appending it instead.")
-        lines.append("\n")
+        lines.append("")
         lines += final_code
 
     updated_content = "\n".join(lines)
@@ -99,7 +92,6 @@ def create_pull_request(filepath, line_number, diagnosis_text, final_code_str, e
     branch_name = f"ai/fix-{error_id[:8]}"
     explanation = diagnosis_text.split("```ruby")[0].strip()
 
-    # PR body reflects the actual committed code
     pr_body = f"""
 ### 🤖 AI Explanation
 

@@ -3,12 +3,22 @@ from search_similar_code import search_similar_snippets
 
 CONTEXT_HINT = os.getenv("PROJECT_CONTEXT_HINT", "")
 
-def build_diagnosis_prompt(message: str, stack_trace: str = "", code_context: str = "") -> str:
+def build_diagnosis_prompt(
+        message: str,
+        stack_trace: str = "",
+        code_context: str = "",
+        runtime_info: dict = None
+) -> str:
     similar_snippets = search_similar_snippets(f"{message}\n{stack_trace}", top_k=3)
     similar_text = "\n\n".join([f"# Related snippet {i+1}:\n{snippet}" for i, snippet in enumerate(similar_snippets)])
 
     code_section = f"🧩 Code Context:\n{code_context}" if code_context else ""
     similar_section = f"🔍 Similar Code from Codebase:\n{similar_text}" if similar_snippets else ""
+
+    runtime_section = ""
+    if runtime_info:
+        runtime_lines = [f"- {key}: {value}" for key, value in runtime_info.items()]
+        runtime_section = f"\n🧠 Runtime Variable Info:\n" + "\n".join(runtime_lines)
 
     return f"""
 You are a senior Ruby on Rails developer.
@@ -35,6 +45,8 @@ Context:
 {stack_trace or "Not available"}
 
 {code_section}
+
+{runtime_section}
 
 {similar_section}
 
