@@ -27,4 +27,4 @@ def search_similar_snippets(query: str, top_k: int = 5) -> list[str]:
     print(f"🔎 Searching top {top_k} matches...")
     distances, indices = index.search(embedding, top_k)
 
-    return [metadata[i] for i in indices[0] if i < len(metadata)]
+    return [metadata[i]["code"] for i in indices[0] if "code" in metadata[i]]
