@@ -1,3 +1,17 @@
-requests
-python-dotenv
-PyGithub
+# Core tools
+requests>=2.32.3
+python-dotenv>=1.0.0
+PyGithub>=2.6.1
+
+# OpenAI + Ollama (client logic)
+openai>=1.0.0
+
+# Vector search and embeddings
+sentence-transformers>=2.2.2
+faiss-cpu>=1.7.4
+scikit-learn>=1.0.2
+numpy>=1.23.0  # Compatible with sentence-transformers
+torch>=2.0.0,<2.3.0  # Required by newer sentence-transformers
+
+# Optional: for CLI progress bars and better output
+tqdm>=4.66.0
