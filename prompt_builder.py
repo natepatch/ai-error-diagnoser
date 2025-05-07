@@ -30,10 +30,12 @@ Your task is to diagnose and fix the following error. This app uses:
 - ActiveRecord with PostgreSQL
 
 Context:
-- Assume the app is a standard Ruby on Rails monolith unless stated otherwise.
-- Follow best practices: avoid swallowing errors silently, prefer clear control flow, and handle nils safely.
-- If a `NullObject` pattern is appropriate, use it explicitly.
-- When changing method signatures, explain why in your reasoning.
+- This is a Ruby on Rails monolith using standard patterns: ActiveRecord, GraphQL, and service objects.
+- Follow idiomatic Ruby and Rails practices: clear control flow, avoid silent failures, and handle `nil` safely.
+- Only return `nil` when the method is explicitly expected to support it — otherwise raise a descriptive error or use a `NullObject`.
+- If a method relies on an associated object or dependency being present (e.g. user, agency, organisation), and that assumption fails, treat it as a bug unless the surrounding logic handles it.
+- Avoid masking deeper issues with `&.` unless the nil case is explicitly valid in the domain logic.
+- Raise descriptive `GraphQL::ExecutionError` exceptions for client-facing APIs when returning `nil` would violate the contract.
 
 ---
 {CONTEXT_HINT}
