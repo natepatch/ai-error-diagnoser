@@ -99,7 +99,7 @@ def create_pull_request(filepath, line_number, diagnosis_text, final_code_str, e
 
 ---
 
-### ✅ Final Suggested Fix
+### ✅ Suggested Fix
 
 ```ruby
 {final_code_str}
