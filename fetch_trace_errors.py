@@ -1,4 +1,3 @@
-
 import os
 import requests
 import json
@@ -44,7 +43,7 @@ payload = {
                 "timezone": "GMT"
             },
             "page": {
-                "limit": 3
+                "limit": 10
             },
             "sort": "timestamp"
         }
@@ -135,7 +134,25 @@ for span in spans:
             continue
 
         print("\n🧠 Analyzing error with AI...")
-        diagnosis_text, final_code_str = diagnose_log(message, stack_trace=stack, code_context=code_context)
+
+        # ✅ Extract runtime info from span metadata
+        meta_tags = attr.get("meta", {})
+        runtime_info = {
+            k: str(v) for k, v in meta_tags.items()
+            if not k.startswith("http.") and not k.startswith("datadog.")
+        }
+
+        if runtime_info:
+            print("\n🧩 Runtime Info extracted from span:")
+            for key, value in runtime_info.items():
+                print(f"{key} = {value}")
+
+        diagnosis_text, final_code_str = diagnose_log(
+            message,
+            stack_trace=stack,
+            code_context=code_context,
+            runtime_info=runtime_info
+        )
 
         if not diagnosis_text or not final_code_str:
             print("⚠️ Skipping PR — AI failed to return usable explanation or code.")
