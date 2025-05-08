@@ -100,7 +100,6 @@ def generate_and_write_rspec_test(class_name: str, method_name: str, method_code
     print("📦 Final test block to write:\n", test_block)
     append_test_to_spec(abs_spec_path, test_block)
 
-    # Clean out any empty `RSpec.describe` blocks
     with open(abs_spec_path, "r+") as f:
         content = f.read()
         cleaned = re.sub(r"RSpec\.describe\s+\w+,\s+type: :\w+\s+do\n\s*end\n*", "", content)
@@ -108,18 +107,39 @@ def generate_and_write_rspec_test(class_name: str, method_name: str, method_code
         f.write(cleaned)
         f.truncate()
 
-    # ✅ Run the spec
+    # ✅ Run the spec and collect failures
     passed, output = run_spec(spec_path, capture_output=True)
 
     if not passed:
         print("❌ Spec failed. Here's what failed:")
-        failure_lines = []
-        for line in output.splitlines():
-            if re.match(r"^\s*\d+\)\s+", line):
-                print("🔻", line.strip())
-                failure_lines.append(line.strip())
-        return None, "\n".join(failure_lines)
 
+        failure_titles = []
+        full_failures = []
+        current_block = []
+        in_block = False
+
+        for line in output.splitlines():
+            print(f"🔍 Debug line: {repr(line)}")
+            if re.match(r"^\s*\d+\)", line):  # Start of a new failure block
+                if current_block:
+                    full_failures.append("\n".join(current_block))
+                current_block = [line.strip()]
+                failure_titles.append(line.strip())
+                in_block = True
+            elif in_block:
+                if line.strip() == "" and current_block:  # End of current block
+                    full_failures.append("\n".join(current_block))
+                    current_block = []
+                    in_block = False
+                else:
+                    current_block.append(line.rstrip())
+
+        # Append any final block
+        if current_block:
+            full_failures.append("\n".join(current_block))
+
+        summary = "\n".join(failure_titles) + "\n\n" + "\n\n".join(full_failures)
+        return None, summary
     return spec_path, None
 
 def guessed_class_name_from_path(filepath: str) -> str:
@@ -145,12 +165,17 @@ def run_spec(spec_path: str, capture_output: bool = False) -> tuple[bool, str]:
     })
 
     result = subprocess.run(
-        ["bundle", "exec", "rspec", abs_spec_path],
+        ["bundle", "exec", "rspec", "--format", "documentation", abs_spec_path],
         cwd=rails_root,
         env=env,
-        capture_output=capture_output,
+        capture_output=True,
         text=True
     )
 
-    return result.returncode == 0, result.stdout if capture_output else ""
+    # Combine stdout + stderr so we get full trace output
+    output = result.stdout + result.stderr
+    return result.returncode == 0, output
+
+
+
 
