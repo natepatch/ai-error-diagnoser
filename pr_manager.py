@@ -5,6 +5,8 @@ import re
 from github_client import get_repo, get_existing_pr, submit_pr_to_github
 from ruby_linter import validate_with_rubocop, autocorrect_with_rubocop
 from ruby_parser import reindent_ruby_method, find_method_bounds
+from ai_fixer.rspec_generator import generate_and_write_rspec_test, run_spec, guessed_class_name_from_path
+from ai_fixer.runner import ask_model  # make sure ask_model is importable here
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -30,9 +32,7 @@ def create_pull_request(filepath, line_number, diagnosis_text, final_code_str, e
     method_name_match = re.search(r"def\s+(\w+)", corrected_code)
     method_name = method_name_match.group(1) if method_name_match else "unknown_method"
 
-
     is_valid, lint_output = validate_with_rubocop(corrected_code)
-
     if not is_valid:
         print(f"❌ RuboCop validation failed even after auto-correct:\n{lint_output}")
         print("❌ Skipping PR — unsafe or unformatted Ruby code.")
@@ -86,6 +86,20 @@ def create_pull_request(filepath, line_number, diagnosis_text, final_code_str, e
             print("❌ Failed to parse RuboCop JSON output. Skipping PR.")
             return
 
+    # ✅ Generate and validate RSpec test for the modified method
+    class_name = guessed_class_name_from_path(filepath)
+    spec_path = generate_and_write_rspec_test(
+        class_name=class_name,
+        method_name=method_name,
+        method_code=corrected_code,
+        app_path=filepath,
+        generate_rspec_block=ask_model,
+    )
+
+    if not run_spec(spec_path):
+        print("❌ Generated RSpec test failed — skipping PR.")
+        return
+
     with open(filepath, "r") as f:
         final_file_content = f.read()
 
@@ -103,7 +117,9 @@ def create_pull_request(filepath, line_number, diagnosis_text, final_code_str, e
 
 ```ruby
 {final_code_str}
+
 ```
 """.strip()
 
     submit_pr_to_github(repo, filepath, branch_name, final_file_content, error_id, pr_body)
+

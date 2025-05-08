@@ -37,13 +37,13 @@ payload = {
             "filter": {
                 "from": "now-24h",
                 "to": "now",
-                "query": "env:prod status:error service:patchwork-on-rails -operation_name:rack.request"
+                "query": "env:prod status:error service:patchwork-on-rails -operation_name:rack.request @graphql.operation_name:currentAccount"
             },
             "options": {
                 "timezone": "GMT"
             },
             "page": {
-                "limit": 10
+                "limit": 1
             },
             "sort": "timestamp"
         }
