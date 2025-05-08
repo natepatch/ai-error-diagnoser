@@ -4,37 +4,64 @@ import os
 import subprocess
 import re
 from pathlib import Path
+from dotenv import load_dotenv
 
-def build_rspec_prompt(class_name: str, method_name: str, method_code: str, file_path: str) -> str:
+load_dotenv()
+def build_rspec_prompt(
+        class_name: str,
+        method_name: str,
+        method_code: str,
+        file_path: str,
+        code_context: str = "",
+        similar_snippets: list = None
+) -> str:
+    from pathlib import Path
+
     try:
         class_context = Path(file_path).read_text()
     except Exception as e:
         class_context = "# Could not read file for context: " + str(e)
 
+    similar_section = ""
+    if similar_snippets:
+        similar_section = "\n\nSimilar Code from Codebase:\n" + "\n\n".join(
+            [f"# Related snippet {i+1}:\n{snippet}" for i, snippet in enumerate(similar_snippets)]
+        )
+
     return f"""
+{os.getenv("GRAPHQL_TESTING_HINT", "")}
+
 You are a senior Ruby on Rails developer writing an RSpec test for the method `{method_name}` in the class `{class_name}`.
 
 This class is defined in the file: `{file_path}`.
-Here is the class context:
-
-```ruby
-{class_context}
-```
 
 Here is the method:
-
 ```ruby
 {method_code}
 ```
+
+Here is additional context from the file:
+```ruby
+{code_context or class_context}
+```
+{similar_section}
 
 Write an RSpec test that:
 - Uses FactoryBot where appropriate
 - Avoids calling `.new` on GraphQL types or other classes not meant to be manually instantiated
 - Stubs any associations or context as needed (e.g. `context[:current_user]`)
-- Includes one success test and tests for common failure paths (e.g. missing user, missing record)
-- Avoids any markdown formatting or explanation
-- Outputs only valid RSpec Ruby code
+- Write no more than 3–5 examples total: 1 success case and 2–4 failure cases that are meaningfully different
+- Do not repeat tests or generate unnecessary variations
+- Avoid any markdown formatting or explanation
+- Output only valid RSpec Ruby code
+- Do not assume models have direct foreign key setters (e.g., `thing_id=`). Instead, use `find_by(attribute: value)` or let the test stub the lookup.
+- Prefer stubbing repository methods (like `.find_by(...)`) instead of assigning foreign keys directly.
+- Use associations only if they are defined in the application (e.g., `create(:record, related_model: object)`), otherwise rely on stubbing.
+
 """.strip()
+
+
+
 
 def strip_markdown_fences(text: str) -> str:
     match = re.search(r"^\s*```ruby\s*\n(.*?)^\s*```", text, re.DOTALL | re.MULTILINE)

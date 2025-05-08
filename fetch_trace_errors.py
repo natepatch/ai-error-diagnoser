@@ -4,11 +4,11 @@ import json
 import hashlib
 import re
 import traceback
-from dotenv import load_dotenv
 from analyze_error import diagnose_log
 from github_code_fetcher import fetch_code_context
 from github_client import get_repo, get_existing_pr, submit_pr_to_github
 from pr_manager import create_pull_request
+from dotenv import load_dotenv
 
 load_dotenv()
 

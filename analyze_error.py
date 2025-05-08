@@ -6,6 +6,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from prompt_builder import build_diagnosis_prompt
 
+
 load_dotenv(override=True)
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
