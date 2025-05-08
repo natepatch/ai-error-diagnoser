@@ -76,7 +76,7 @@ def infer_ruby_constant_from_path(app_path: str) -> str:
         parts = parts[1:]
     return "::".join("".join(w.capitalize() for w in part.split("_")) for part in parts)
 
-def generate_and_write_rspec_test(class_name: str, method_name: str, method_code: str, app_path: str, generate_rspec_block) -> str:
+def generate_and_write_rspec_test(class_name: str, method_name: str, method_code: str, app_path: str, generate_rspec_block) -> tuple[str | None, str | None]:
     spec_path = get_spec_path(app_path)
     rails_root = os.getenv("RAILS_REPO_PATH")
     if not rails_root:
@@ -100,6 +100,7 @@ def generate_and_write_rspec_test(class_name: str, method_name: str, method_code
     print("📦 Final test block to write:\n", test_block)
     append_test_to_spec(abs_spec_path, test_block)
 
+    # Clean out any empty `RSpec.describe` blocks
     with open(abs_spec_path, "r+") as f:
         content = f.read()
         cleaned = re.sub(r"RSpec\.describe\s+\w+,\s+type: :\w+\s+do\n\s*end\n*", "", content)
@@ -107,22 +108,34 @@ def generate_and_write_rspec_test(class_name: str, method_name: str, method_code
         f.write(cleaned)
         f.truncate()
 
-    return spec_path
+    # ✅ Run the spec
+    passed, output = run_spec(spec_path, capture_output=True)
+
+    if not passed:
+        print("❌ Spec failed. Here's what failed:")
+        failure_lines = []
+        for line in output.splitlines():
+            if re.match(r"^\s*\d+\)\s+", line):
+                print("🔻", line.strip())
+                failure_lines.append(line.strip())
+        return None, "\n".join(failure_lines)
+
+    return spec_path, None
 
 def guessed_class_name_from_path(filepath: str) -> str:
     filename = os.path.basename(filepath).replace(".rb", "")
     return ''.join(word.capitalize() for word in filename.split('_'))
 
-def run_spec(spec_path: str) -> bool:
+def run_spec(spec_path: str, capture_output: bool = False) -> tuple[bool, str]:
     rails_root = os.getenv("RAILS_REPO_PATH")
     if not rails_root:
         print("❌ RAILS_REPO_PATH not set in environment. Skipping spec run.")
-        return False
+        return False, ""
 
     abs_spec_path = os.path.join(rails_root, spec_path)
     if not os.path.exists(abs_spec_path):
         print(f"❌ Spec file not found at: {abs_spec_path}")
-        return False
+        return False, ""
 
     env = os.environ.copy()
     env.update({
@@ -134,6 +147,10 @@ def run_spec(spec_path: str) -> bool:
     result = subprocess.run(
         ["bundle", "exec", "rspec", abs_spec_path],
         cwd=rails_root,
-        env=env
+        env=env,
+        capture_output=capture_output,
+        text=True
     )
-    return result.returncode == 0
+
+    return result.returncode == 0, result.stdout if capture_output else ""
+
