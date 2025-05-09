@@ -11,18 +11,18 @@ load_dotenv(override=True)
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 MODEL_BACKEND = os.getenv("MODEL_BACKEND", "mistral")  # or "gpt-4"
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4-1106-preview")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 client = None
-if MODEL_BACKEND == "gpt-4":
+if MODEL_BACKEND == "gpt-4o-mini":
     client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 # 🔁 Reusable for general-purpose prompting (used by validate_and_correct_ruby_code)
 def ask_model(prompt_text: str) -> str:
-    if MODEL_BACKEND == "gpt-4":
-        print("🤖 Using GPT-4 via OpenAI API")
+    if MODEL_BACKEND == "gpt-4o-mini":
+        print("🤖 Using GPT-4o mini via OpenAI API")
         response = client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=[

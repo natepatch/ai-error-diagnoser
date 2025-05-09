@@ -1,12 +1,14 @@
-
-from ai_fixer.spec_utils import get_spec_path, ensure_spec_file_exists, append_test_to_spec
+from ai_fixer.spec_utils import get_spec_path, ensure_spec_file_exists, append_test_to_spec, parse_rspec_output_to_json
 import os
 import subprocess
 import re
 from pathlib import Path
 from dotenv import load_dotenv
+import json
 
 load_dotenv()
+
+
 def build_rspec_prompt(
         class_name: str,
         method_name: str,
@@ -57,10 +59,7 @@ Write an RSpec test that:
 - Do not assume models have direct foreign key setters (e.g., `thing_id=`). Instead, use `find_by(attribute: value)` or let the test stub the lookup.
 - Prefer stubbing repository methods (like `.find_by(...)`) instead of assigning foreign keys directly.
 - Use associations only if they are defined in the application (e.g., `create(:record, related_model: object)`), otherwise rely on stubbing.
-
 """.strip()
-
-
 
 
 def strip_markdown_fences(text: str) -> str:
@@ -69,12 +68,14 @@ def strip_markdown_fences(text: str) -> str:
         return match.group(1).strip()
     return text.strip()
 
+
 def infer_ruby_constant_from_path(app_path: str) -> str:
     rel_path = app_path.replace("app/", "").replace(".rb", "")
     parts = rel_path.split("/")
     if parts[0] in {"graphql", "controllers", "helpers", "views"}:
         parts = parts[1:]
     return "::".join("".join(w.capitalize() for w in part.split("_")) for part in parts)
+
 
 def generate_and_write_rspec_test(class_name: str, method_name: str, method_code: str, app_path: str, generate_rspec_block) -> tuple[str | None, str | None]:
     spec_path = get_spec_path(app_path)
@@ -107,44 +108,39 @@ def generate_and_write_rspec_test(class_name: str, method_name: str, method_code
         f.write(cleaned)
         f.truncate()
 
-    # ✅ Run the spec and collect failures
     passed, output = run_spec(spec_path, capture_output=True)
 
     if not passed:
         print("❌ Spec failed. Here's what failed:")
+        print("🧪 Parsing failed RSpec output...")
 
-        failure_titles = []
-        full_failures = []
-        current_block = []
-        in_block = False
+        parsed_failures = parse_rspec_output_to_json(output)
+        print("🧾 Parsed failures (JSON):")
+        print(json.dumps(parsed_failures, indent=2))
+        if not parsed_failures:
+            summary = "❌ RSpec failed, but no structured errors were parsed.\n\n" + output
+        else:
+            summary_lines = ["🧪 Parsed structured failures:"]
+            for failure in parsed_failures:
+                summary_lines.append(f"[{failure['index']}] {failure['description']}")
+                summary_lines.append(f"Error Type: {failure['error_type']}")
+                summary_lines.append(f"Message: {failure['message']}")
+                if failure['hint']:
+                    summary_lines.append(f"Hint: {failure['hint']}")
+                for file in failure['file_paths']:
+                    summary_lines.append(f"File: {file['path']}:{file['line']}")
+                summary_lines.append("")  # spacing between failures
+            summary = "\n".join(summary_lines)
 
-        for line in output.splitlines():
-            print(f"🔍 Debug line: {repr(line)}")
-            if re.match(r"^\s*\d+\)", line):  # Start of a new failure block
-                if current_block:
-                    full_failures.append("\n".join(current_block))
-                current_block = [line.strip()]
-                failure_titles.append(line.strip())
-                in_block = True
-            elif in_block:
-                if line.strip() == "" and current_block:  # End of current block
-                    full_failures.append("\n".join(current_block))
-                    current_block = []
-                    in_block = False
-                else:
-                    current_block.append(line.rstrip())
-
-        # Append any final block
-        if current_block:
-            full_failures.append("\n".join(current_block))
-
-        summary = "\n".join(failure_titles) + "\n\n" + "\n\n".join(full_failures)
         return None, summary
+
     return spec_path, None
+
 
 def guessed_class_name_from_path(filepath: str) -> str:
     filename = os.path.basename(filepath).replace(".rb", "")
     return ''.join(word.capitalize() for word in filename.split('_'))
+
 
 def run_spec(spec_path: str, capture_output: bool = False) -> tuple[bool, str]:
     rails_root = os.getenv("RAILS_REPO_PATH")
@@ -172,10 +168,5 @@ def run_spec(spec_path: str, capture_output: bool = False) -> tuple[bool, str]:
         text=True
     )
 
-    # Combine stdout + stderr so we get full trace output
     output = result.stdout + result.stderr
     return result.returncode == 0, output
-
-
-
-
