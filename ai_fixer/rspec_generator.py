@@ -76,7 +76,117 @@ def infer_ruby_constant_from_path(app_path: str) -> str:
         parts = parts[1:]
     return "::".join("".join(w.capitalize() for w in part.split("_")) for part in parts)
 
-def generate_and_write_rspec_test(class_name: str, method_name: str, method_code: str, app_path: str, generate_rspec_block) -> tuple[str | None, str | None]:
+import os
+import re
+import json
+from typing import Callable, Tuple
+
+import re
+
+import re
+import json
+
+def parse_rspec_output_to_json(output: str) -> list[dict]:
+    full_failures = []
+    current_block = []
+    collecting = False
+
+    for line in output.splitlines():
+        if re.match(r"^\s*\d+\)", line):
+            if current_block:
+                full_failures.append(current_block)
+            current_block = [line]
+            collecting = True
+        elif collecting:
+            if line.strip().startswith("rspec "):
+                collecting = False
+                if current_block:
+                    full_failures.append(current_block)
+                    current_block = []
+                continue
+            current_block.append(line)
+            if line.strip() == "":
+                # don’t close block just yet – multi-line allowed
+                continue
+
+    if current_block:
+        full_failures.append(current_block)
+
+    parsed = []
+
+    for block in full_failures:
+        if not block:
+            continue
+
+        header = block[0].strip()
+        index_match = re.match(r"^(\d+)\)\s+(.*)", header)
+        if not index_match:
+            continue
+
+        index = int(index_match.group(1))
+        description = index_match.group(2).strip()
+
+        error_type = ""
+        message = ""
+        hint = None
+        file_paths = []
+
+        for i, line in enumerate(block[1:], start=1):
+            stripped = line.strip()
+
+            # 1. Capture error type like GraphQL::ExecutionError:
+            if not error_type:
+                err_match = re.match(r"^((?:\w+::)*\w+Error):", stripped)
+                if err_match:
+                    error_type = err_match.group(1)
+                    continue
+
+            # 2. Capture message (first non-empty line after error type)
+            if error_type and not message:
+                if stripped and not stripped.startswith("Did you mean?") and not stripped.startswith("#"):
+                    message = stripped
+                    continue
+
+            # 3. Hint
+            if not hint:
+                hint_match = re.match(r"Did you mean\?\s+(.*)", stripped)
+                if hint_match:
+                    hint = hint_match.group(1)
+
+            # 4. File path
+            file_match = re.match(r"#\s+(.+?):(\d+)", stripped)
+            if file_match:
+                file_paths.append({
+                    "path": file_match.group(1),
+                    "line": int(file_match.group(2))
+                })
+
+        parsed.append({
+            "index": index,
+            "description": description,
+            "error_type": error_type,
+            "message": message,
+            "hint": hint,
+            "file_paths": file_paths
+        })
+
+    return parsed
+
+
+def generate_and_write_rspec_test(
+        class_name: str,
+        method_name: str,
+        method_code: str,
+        app_path: str,
+        generate_rspec_block: Callable[[str], str],
+        run_spec: Callable[[str, bool], Tuple[bool, str]],
+        build_rspec_prompt: Callable[[str, str, str, str], str],
+        infer_ruby_constant_from_path: Callable[[str], str],
+        get_spec_path: Callable[[str], str],
+        ensure_spec_file_exists: Callable[[str, str], None],
+        append_test_to_spec: Callable[[str, str], None],
+        strip_markdown_fences: Callable[[str], str]
+) -> Tuple[str | None, str | None]:
     spec_path = get_spec_path(app_path)
     rails_root = os.getenv("RAILS_REPO_PATH")
     if not rails_root:
@@ -107,40 +217,16 @@ def generate_and_write_rspec_test(class_name: str, method_name: str, method_code
         f.write(cleaned)
         f.truncate()
 
-    # ✅ Run the spec and collect failures
     passed, output = run_spec(spec_path, capture_output=True)
 
     if not passed:
         print("❌ Spec failed. Here's what failed:")
+        failures = parse_rspec_output_to_json(output)
+        return None, json.dumps(failures, indent=2)
 
-        failure_titles = []
-        full_failures = []
-        current_block = []
-        in_block = False
-
-        for line in output.splitlines():
-            print(f"🔍 Debug line: {repr(line)}")
-            if re.match(r"^\s*\d+\)", line):  # Start of a new failure block
-                if current_block:
-                    full_failures.append("\n".join(current_block))
-                current_block = [line.strip()]
-                failure_titles.append(line.strip())
-                in_block = True
-            elif in_block:
-                if line.strip() == "" and current_block:  # End of current block
-                    full_failures.append("\n".join(current_block))
-                    current_block = []
-                    in_block = False
-                else:
-                    current_block.append(line.rstrip())
-
-        # Append any final block
-        if current_block:
-            full_failures.append("\n".join(current_block))
-
-        summary = "\n".join(failure_titles) + "\n\n" + "\n\n".join(full_failures)
-        return None, summary
     return spec_path, None
+
+
 
 def guessed_class_name_from_path(filepath: str) -> str:
     filename = os.path.basename(filepath).replace(".rb", "")
@@ -175,7 +261,3 @@ def run_spec(spec_path: str, capture_output: bool = False) -> tuple[bool, str]:
     # Combine stdout + stderr so we get full trace output
     output = result.stdout + result.stderr
     return result.returncode == 0, output
-
-
-
-
